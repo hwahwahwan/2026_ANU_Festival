@@ -1,0 +1,34 @@
+# 의존성
+node_modules/
+
+# 환경 변수
+.env
+.env.*
+!.env.example
+
+# 빌드 결과물
+dist/
+build/
+
+# 로그
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 테스트 결과물
+coverage/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# 임시 파일
+*.tmp
+*.temp
+.cache/
