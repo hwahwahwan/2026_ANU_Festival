@@ -66,6 +66,8 @@ export class ApiExceptionFilter implements ExceptionFilter {
         return ERROR_CODE.NOT_FOUND;
       case HttpStatus.CONFLICT:
         return ERROR_CODE.CONFLICT;
+      case HttpStatus.TOO_MANY_REQUESTS:
+        return ERROR_CODE.TOO_MANY_REQUESTS;
       default:
         return ERROR_CODE.INTERNAL_ERROR;
     }
