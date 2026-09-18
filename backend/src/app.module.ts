@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { DomainEventsModule } from './common/events/domain-events.module';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { DomainEventsModule } from './common/events/domain-events.module';
     }),
     DatabaseModule,
     DomainEventsModule,
+    OrdersModule,
   ],
 })
 export class AppModule {}
