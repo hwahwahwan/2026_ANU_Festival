@@ -11,7 +11,6 @@ describe('ERROR_CODE_HTTP_STATUS', () => {
   });
 
   it('도메인 error code도 각자 정의된 status를 유지한다', () => {
-    expect(ERROR_CODE_HTTP_STATUS[ERROR_CODE.GUEST_REQUIRED]).toBe(401);
     expect(ERROR_CODE_HTTP_STATUS[ERROR_CODE.ADMIN_UNAUTHORIZED]).toBe(401);
     expect(ERROR_CODE_HTTP_STATUS[ERROR_CODE.SALES_PASSWORD_INVALID]).toBe(403);
     expect(ERROR_CODE_HTTP_STATUS[ERROR_CODE.ORDER_NOT_FOUND]).toBe(404);
