@@ -10,6 +10,7 @@ import {
   ADMIN_LOGIN_RATE_LIMIT_MESSAGE,
   ADMIN_LOGIN_RATE_LIMIT_TTL_MS,
 } from './admin-auth/admin-auth-rate-limit';
+import { OrdersModule } from './orders/orders.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import {
       errorMessage: ADMIN_LOGIN_RATE_LIMIT_MESSAGE,
     }),
     AdminAuthModule,
+    OrdersModule,
   ],
 })
 export class AppModule {}
