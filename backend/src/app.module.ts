@@ -13,6 +13,7 @@ import {
 import { OrdersModule } from './orders/orders.module';
 import { MenusModule } from './menus/menus.module';
 import { PaymentSettingsModule } from './payment-settings/payment-settings.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { PaymentSettingsModule } from './payment-settings/payment-settings.modul
     MenusModule,
     PaymentSettingsModule,
     OrdersModule,
+    RealtimeModule,
   ],
 })
 export class AppModule {}

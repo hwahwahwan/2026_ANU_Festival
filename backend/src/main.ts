@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { configureApp } from './common/configure-app';
+import { SocketIoAdapter } from './realtime/socket-io.adapter';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -22,6 +23,8 @@ async function bootstrap(): Promise<void> {
     origin: configService.get<string>('FRONTEND_ORIGIN'),
     credentials: true,
   });
+
+  app.useWebSocketAdapter(new SocketIoAdapter(app));
 
   const port = configService.getOrThrow<string>('PORT');
   await app.listen(port);
