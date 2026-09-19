@@ -11,6 +11,7 @@ import {
   ADMIN_LOGIN_RATE_LIMIT_TTL_MS,
 } from './admin-auth/admin-auth-rate-limit';
 import { OrdersModule } from './orders/orders.module';
+import { MenusModule } from './menus/menus.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { OrdersModule } from './orders/orders.module';
       errorMessage: ADMIN_LOGIN_RATE_LIMIT_MESSAGE,
     }),
     AdminAuthModule,
+    MenusModule,
     OrdersModule,
   ],
 })
