@@ -73,6 +73,8 @@ describe('AdminAuth (실제 PostgreSQL integration)', () => {
       expect(cookie).toMatch(/HttpOnly/);
       expect(cookie).toMatch(/SameSite=Lax/i);
       expect(cookie).toMatch(/Path=\//);
+      // 관리자 JWT 유효기간 12시간(확정, 2026-09-20) = 43200초.
+      expect(cookie).toMatch(/Max-Age=43200/);
     });
 
     it('[2] 잘못된 비밀번호는 401 ADMIN_LOGIN_FAILED를 반환한다', async () => {

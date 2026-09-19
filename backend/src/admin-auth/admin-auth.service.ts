@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -45,21 +46,38 @@ export class AdminAuthService {
       );
     }
 
-    const payload: AdminJwtPayload = { sub: admin.id };
+    // jti: 로그인마다 새로 발급하는 세션(기기) 식별자. 같은 관리자가 다른
+    // 기기/탭에서 로그인해도 값이 달라, 로그아웃 시 그 세션의 Socket만 골라
+    // 끊을 수 있다(admin-principal.ts 참고).
+    const payload: AdminJwtPayload = { sub: admin.id, jti: randomUUID() };
     return this.jwtService.sign(payload);
   }
 
   /**
-   * 로그아웃 시 이 브라우저의 관리자 Socket도 즉시 종료한다(003_백엔드2_운영실시간.md
-   * §10). Cookie가 없거나 만료·변조된 토큰이면 어떤 admin의 세션인지 신뢰할 수
-   * 없으므로 조용히 무시한다 — 로그아웃 자체는 이 경우에도 항상 204로 멱등적이다.
+   * 로그아웃 시 이 브라우저(=이 JWT 세션)의 관리자 Socket만 즉시 종료한다
+   * (003_백엔드2_운영실시간.md §10). 같은 adminId로 다른 기기/탭에서 로그인한
+   * Socket은 다른 세션(jti)이므로 영향받지 않는다. Cookie가 없거나 만료·변조된
+   * 토큰이면 어떤 세션인지 신뢰할 수 없으므로 조용히 무시한다 — 로그아웃 자체는
+   * 이 경우에도 항상 204로 멱등적이다.
    */
   notifyLogout(token: string | undefined): void {
     try {
       const admin = verifyAdminJwt(this.jwtService, token);
-      this.eventEmitter.emit('admin.logged_out', { adminId: admin.adminId });
-    } catch {
-      // 유효한 세션이 아니면 종료할 Socket도 없다.
+      this.eventEmitter.emit('admin.logged_out', {
+        adminId: admin.adminId,
+        sessionId: admin.sessionId,
+      });
+    } catch (error) {
+      // Cookie 없음/만료·변조 토큰으로 로그아웃을 호출하는 것은 정상적인
+      // 상황이라 종료할 Socket이 없는 것뿐이지만, eventEmitter.emit() 리스너
+      // (Realtime) 쪽에서 발생하는 예상 밖 예외까지 이 catch가 조용히 삼키므로
+      // 원인만 warn으로 남긴다(토큰 값 자체는 남기지 않는다). 로그아웃 자체의
+      // 204 응답/멱등성 동작은 이 로그와 무관하게 그대로 유지된다.
+      this.logger.warn(
+        `관리자 Socket 종료 신호(admin.logged_out)를 보내지 못했습니다. 원인: ${
+          error instanceof Error ? error.constructor.name : typeof error
+        }`,
+      );
     }
   }
 

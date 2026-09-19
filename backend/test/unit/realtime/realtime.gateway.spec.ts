@@ -61,9 +61,9 @@ describe('RealtimeGateway', () => {
     clearSpy.mockRestore();
   });
 
-  it('disconnectAdmin은 해당 adminId로 연결된 소켓만 끊고 다른 관리자는 그대로 둔다', () => {
-    const matching = createSocket({ adminId: 'admin-1' });
-    const other = createSocket({ adminId: 'admin-2' });
+  it('disconnectAdmin은 adminId와 sessionId가 모두 일치하는 소켓만 끊고 다른 관리자는 그대로 둔다', () => {
+    const matching = createSocket({ adminId: 'admin-1', sessionId: 'session-1' });
+    const other = createSocket({ adminId: 'admin-2', sessionId: 'session-2' });
     (
       gateway as unknown as {
         server: { sockets: { sockets: Map<string, Socket> } };
@@ -77,9 +77,37 @@ describe('RealtimeGateway', () => {
       },
     };
 
-    gateway.disconnectAdmin('admin-1');
+    gateway.disconnectAdmin('admin-1', 'session-1');
 
     expect(matching.disconnect).toHaveBeenCalledWith(true);
     expect(other.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('disconnectAdmin은 같은 adminId라도 sessionId(다른 기기/탭의 로그인)가 다르면 끊지 않는다', () => {
+    const loggedOutDevice = createSocket({
+      adminId: 'admin-1',
+      sessionId: 'session-1',
+    });
+    const otherDeviceSameAdmin = createSocket({
+      adminId: 'admin-1',
+      sessionId: 'session-2',
+    });
+    (
+      gateway as unknown as {
+        server: { sockets: { sockets: Map<string, Socket> } };
+      }
+    ).server = {
+      sockets: {
+        sockets: new Map([
+          ['socket-1', loggedOutDevice],
+          ['socket-2', otherDeviceSameAdmin],
+        ]),
+      },
+    };
+
+    gateway.disconnectAdmin('admin-1', 'session-1');
+
+    expect(loggedOutDevice.disconnect).toHaveBeenCalledWith(true);
+    expect(otherDeviceSameAdmin.disconnect).not.toHaveBeenCalled();
   });
 });

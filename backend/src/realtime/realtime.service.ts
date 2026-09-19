@@ -14,7 +14,7 @@ export class RealtimeService {
     this.gateway.emitToAdmins('order.created', payload);
   }
 
-  disconnectAdmin(adminId: string): void {
-    this.gateway.disconnectAdmin(adminId);
+  disconnectAdmin(adminId: string, sessionId: string | undefined): void {
+    this.gateway.disconnectAdmin(adminId, sessionId);
   }
 }

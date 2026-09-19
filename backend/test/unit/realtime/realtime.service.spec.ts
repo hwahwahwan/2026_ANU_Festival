@@ -12,12 +12,12 @@ describe('RealtimeService', () => {
     expect(gateway.emitToAdmins).toHaveBeenCalledWith('order.created', payload);
   });
 
-  it('disconnectAdmin은 Gateway에 그대로 위임한다', () => {
+  it('disconnectAdmin은 adminId와 sessionId를 그대로 Gateway에 위임한다', () => {
     const gateway = { disconnectAdmin: jest.fn() } as unknown as RealtimeGateway;
     const service = new RealtimeService(gateway);
 
-    service.disconnectAdmin('admin-1');
+    service.disconnectAdmin('admin-1', 'session-1');
 
-    expect(gateway.disconnectAdmin).toHaveBeenCalledWith('admin-1');
+    expect(gateway.disconnectAdmin).toHaveBeenCalledWith('admin-1', 'session-1');
   });
 });
