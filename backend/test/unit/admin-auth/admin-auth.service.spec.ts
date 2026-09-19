@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 
@@ -26,6 +27,7 @@ describe('AdminAuthService', () => {
   let admin: AdminRecord;
   let repository: jest.Mocked<AdminsRepository>;
   let jwtService: JwtService;
+  let eventEmitter: { emit: jest.Mock };
   let service: AdminAuthService;
 
   beforeAll(async () => {
@@ -47,7 +49,13 @@ describe('AdminAuthService', () => {
       signOptions: { expiresIn: ADMIN_JWT_EXPIRES_IN_SECONDS },
     });
 
-    service = new AdminAuthService(repository, jwtService);
+    eventEmitter = { emit: jest.fn() };
+
+    service = new AdminAuthService(
+      repository,
+      jwtService,
+      eventEmitter as unknown as EventEmitter2,
+    );
   });
 
   describe('login', () => {
@@ -177,6 +185,43 @@ describe('AdminAuthService', () => {
       await expect(
         service.verifyAdminPassword(ADMIN_ID, CORRECT_PASSWORD),
       ).resolves.toBe(false);
+    });
+  });
+
+  describe('notifyLogout', () => {
+    it('유효한 토큰이면 admin.logged_out 이벤트를 해당 adminId로 발행한다', () => {
+      const token = jwtService.sign({ sub: ADMIN_ID });
+
+      service.notifyLogout(token);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith('admin.logged_out', {
+        adminId: ADMIN_ID,
+      });
+    });
+
+    it('토큰이 없으면 이벤트를 발행하지 않는다', () => {
+      service.notifyLogout(undefined);
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('만료된 토큰이면 이벤트를 발행하지 않는다', () => {
+      const expiredToken = jwtService.sign(
+        { sub: ADMIN_ID },
+        { expiresIn: -10 },
+      );
+
+      service.notifyLogout(expiredToken);
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
+    });
+
+    it('변조된 토큰이면 이벤트를 발행하지 않는다', () => {
+      const validToken = jwtService.sign({ sub: ADMIN_ID });
+
+      service.notifyLogout(`${validToken}tampered`);
+
+      expect(eventEmitter.emit).not.toHaveBeenCalled();
     });
   });
 });

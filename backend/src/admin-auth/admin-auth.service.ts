@@ -1,10 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as argon2 from 'argon2';
 import { ERROR_CODE } from '../common/contracts/api-error';
 import { ApiException } from '../common/filters/api.exception';
 import { AdminJwtPayload } from '../common/contracts/admin-principal';
 import { AdminsRepository } from './admins.repository';
+import { verifyAdminJwt } from './verify-admin-jwt';
 
 /**
  * 존재하지 않는 username은 DB 조회만으로 끝나 argon2 검증(수십~100ms)을 건너뛰므로,
@@ -24,6 +26,7 @@ export class AdminAuthService {
   constructor(
     private readonly adminsRepository: AdminsRepository,
     private readonly jwtService: JwtService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async login(username: string, password: string): Promise<string> {
@@ -44,6 +47,20 @@ export class AdminAuthService {
 
     const payload: AdminJwtPayload = { sub: admin.id };
     return this.jwtService.sign(payload);
+  }
+
+  /**
+   * 로그아웃 시 이 브라우저의 관리자 Socket도 즉시 종료한다(003_백엔드2_운영실시간.md
+   * §10). Cookie가 없거나 만료·변조된 토큰이면 어떤 admin의 세션인지 신뢰할 수
+   * 없으므로 조용히 무시한다 — 로그아웃 자체는 이 경우에도 항상 204로 멱등적이다.
+   */
+  notifyLogout(token: string | undefined): void {
+    try {
+      const admin = verifyAdminJwt(this.jwtService, token);
+      this.eventEmitter.emit('admin.logged_out', { adminId: admin.adminId });
+    } catch {
+      // 유효한 세션이 아니면 종료할 Socket도 없다.
+    }
   }
 
   async verifyAdminPassword(
