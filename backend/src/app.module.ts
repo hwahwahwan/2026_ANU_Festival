@@ -12,6 +12,7 @@ import {
 } from './admin-auth/admin-auth-rate-limit';
 import { OrdersModule } from './orders/orders.module';
 import { MenusModule } from './menus/menus.module';
+import { PaymentSettingsModule } from './payment-settings/payment-settings.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { MenusModule } from './menus/menus.module';
     }),
     AdminAuthModule,
     MenusModule,
+    PaymentSettingsModule,
     OrdersModule,
   ],
 })
