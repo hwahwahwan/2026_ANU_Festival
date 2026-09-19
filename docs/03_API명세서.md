@@ -291,6 +291,10 @@ Response Body (`PaymentSettingsView`):
 
 `accountNumber`는 문자열이다(앞자리 0 보존 목적).
 
+**계좌 미설정 시 (확정, 2026-09-19):** 관리자가 아직 한 번도 계좌를 등록하지 않았거나(`PATCH /admin/settings/payment` 미실행) 배포 시 초기 seed(`npm run seed:payment-settings`)를 실행하지 않은 경우, `payment_settings`에 행이 없다. 이 경우 빈 값이나 임의 값으로 200을 반환하지 않고 `404 NOT_FOUND`로 응답한다. Frontend는 이 코드를 "계좌 준비 중" 상태로 별도 처리해야 한다(예: "입금 계좌 준비 중입니다. 부스에 문의해주세요.").
+
+발생 가능한 Error Code: `NOT_FOUND`
+
 ---
 
 ## 2-2. 관리자 주문 API (Backend 1)
@@ -530,6 +534,10 @@ Request Body (둘 중 하나 이상):
 
 Response Body: `PaymentSettingsView` (`GET /settings/payment`와 동일 구조)
 
+계좌 미설정 시 `GET /settings/payment`와 동일하게 `404 NOT_FOUND`(§2-1 참고). 관리자 화면도 최초 설정 전에는 조회가 아니라 빈 폼에서 `PATCH`로 최초 등록하는 흐름을 전제로 한다.
+
+발생 가능한 Error Code: `NOT_FOUND`, `ADMIN_UNAUTHORIZED`
+
 ---
 
 ### PATCH /admin/settings/payment
@@ -542,11 +550,13 @@ Response Body: `PaymentSettingsView` (`GET /settings/payment`와 동일 구조)
 | 인증 | 관리자 (매출 비밀번호 불필요) |
 | 성공 코드 | `200 OK` (갱신된 `PaymentSettingsView` 반환) |
 
-Request Body:
+Request Body(`bankName`/`accountNumber`/`accountHolder` **3개 필드 모두 필수** — 부분 수정이 아니라 전체 교체다):
 
 ```json
 { "bankName": "신한은행", "accountNumber": "110123456789", "accountHolder": "홍길동" }
 ```
+
+값 검증(확정, 2026-09-19): 각 필드는 앞뒤 공백을 제거(trim)한 뒤 저장한다. trim 후 빈 문자열이 되는 값(예: `"   "`)은 `VALIDATION_ERROR`로 거절한다. 설정이 아직 없는 상태에서 호출하면 최초 등록으로 처리되어 `200`을 반환한다(이 경우는 최초 등록이지 "변경"이 아니므로 관리자 변경 이력에는 남기지 않는다 — 04_DB스키마.md §9-1 참고). 이미 값이 있는 상태에서 실제로 값이 하나라도 달라지면 변경 이력이 남는다.
 
 발생 가능한 Error Code: `VALIDATION_ERROR`, `ADMIN_UNAUTHORIZED`
 
