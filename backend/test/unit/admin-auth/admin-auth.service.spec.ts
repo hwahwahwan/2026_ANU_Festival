@@ -68,6 +68,17 @@ describe('AdminAuthService', () => {
       expect(payload.sub).toBe(ADMIN_ID);
     });
 
+    it('발급된 JWT의 유효기간이 ADMIN_JWT_EXPIRES_IN_SECONDS(12시간)와 정확히 일치한다', async () => {
+      repository.findByUsername.mockResolvedValue(admin);
+
+      const token = await service.login('admin1', CORRECT_PASSWORD);
+
+      const payload = jwtService.verify<
+        AdminJwtPayload & { iat: number; exp: number }
+      >(token);
+      expect(payload.exp - payload.iat).toBe(ADMIN_JWT_EXPIRES_IN_SECONDS);
+    });
+
     it('존재하지 않는 아이디는 ADMIN_LOGIN_FAILED를 던진다', async () => {
       repository.findByUsername.mockResolvedValue(null);
 
@@ -196,7 +207,40 @@ describe('AdminAuthService', () => {
 
       expect(eventEmitter.emit).toHaveBeenCalledWith('admin.logged_out', {
         adminId: ADMIN_ID,
+        sessionId: undefined,
       });
+    });
+
+    it('토큰에 jti(세션 식별자)가 있으면 그 값을 그대로 sessionId로 실어 이벤트를 발행한다', () => {
+      const token = jwtService.sign({ sub: ADMIN_ID, jti: 'session-abc' });
+
+      service.notifyLogout(token);
+
+      expect(eventEmitter.emit).toHaveBeenCalledWith('admin.logged_out', {
+        adminId: ADMIN_ID,
+        sessionId: 'session-abc',
+      });
+    });
+
+    it('login()으로 발급한 토큰마다 서로 다른 sessionId(jti)가 부여된다', async () => {
+      repository.findByUsername.mockResolvedValue(admin);
+
+      const tokenA = await service.login('admin1', CORRECT_PASSWORD);
+      const tokenB = await service.login('admin1', CORRECT_PASSWORD);
+
+      service.notifyLogout(tokenA);
+      const firstCallPayload = eventEmitter.emit.mock.calls[0][1] as {
+        sessionId: string | undefined;
+      };
+
+      service.notifyLogout(tokenB);
+      const secondCallPayload = eventEmitter.emit.mock.calls[1][1] as {
+        sessionId: string | undefined;
+      };
+
+      expect(firstCallPayload.sessionId).toEqual(expect.any(String));
+      expect(secondCallPayload.sessionId).toEqual(expect.any(String));
+      expect(firstCallPayload.sessionId).not.toBe(secondCallPayload.sessionId);
     });
 
     it('토큰이 없으면 이벤트를 발행하지 않는다', () => {

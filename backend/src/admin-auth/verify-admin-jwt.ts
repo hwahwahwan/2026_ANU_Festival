@@ -26,5 +26,6 @@ export function verifyAdminJwt(
   return {
     adminId: payload.sub,
     expiresAt: payload.exp,
+    sessionId: typeof payload.jti === 'string' ? payload.jti : undefined,
   };
 }

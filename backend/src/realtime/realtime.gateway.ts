@@ -16,6 +16,8 @@ interface AdminSocketData {
   adminId?: string;
   expiresAt?: number;
   expiryTimer?: NodeJS.Timeout;
+  /** 로그인 세션(기기) 식별자(JWT jti). disconnectAdmin의 세션 매칭에 사용한다. */
+  sessionId?: string;
 }
 
 /**
@@ -42,6 +44,7 @@ export class RealtimeGateway
         const data = socket.data as AdminSocketData;
         data.adminId = admin.adminId;
         data.expiresAt = admin.expiresAt;
+        data.sessionId = admin.sessionId;
         next();
       } catch {
         next(new Error(ERROR_CODE.ADMIN_UNAUTHORIZED));
@@ -64,10 +67,13 @@ export class RealtimeGateway
 
     // §29: JWT 만료 시간이 지나면 기존 Socket도 관리자 이벤트를 계속 받지
     // 못하도록 한다. 재연결 시 §32에 따라 재인증한다.
+    // unref(): 최대 12시간(ADMIN_JWT_EXPIRES_IN_SECONDS) 뒤에 발화하는 이 타이머가
+    // 유일하게 남은 작업이어도 프로세스 종료를 막지 않도록 한다(disconnect 시
+    // clearTimeout으로 정리하는 기존 동작은 그대로 유지).
     const delayMs = Math.max(data.expiresAt * 1000 - Date.now(), 0);
     data.expiryTimer = setTimeout(() => {
       socket.disconnect(true);
-    }, delayMs);
+    }, delayMs).unref();
   }
 
   handleDisconnect(socket: Socket): void {
@@ -82,12 +88,16 @@ export class RealtimeGateway
   }
 
   /**
-   * 로그아웃한 관리자의 현재 연결된 Socket을 즉시 종료한다(003_백엔드2_운영실시간.md
-   * §10). 단일 프로세스라 in-memory socket map을 직접 순회하는 것으로 충분하다.
+   * 로그아웃한 바로 그 로그인 세션(기기)의 Socket만 즉시 종료한다
+   * (003_백엔드2_운영실시간.md §10). adminId만으로 매칭하면 같은 관리자가 다른
+   * 기기/탭에서 로그인한 Socket까지 함께 끊기므로, JWT 세션 식별자(jti)까지
+   * 일치하는 Socket만 종료한다. 단일 프로세스라 in-memory socket map을 직접
+   * 순회하는 것으로 충분하다.
    */
-  disconnectAdmin(adminId: string): void {
+  disconnectAdmin(adminId: string, sessionId: string | undefined): void {
     for (const socket of this.server.sockets.sockets.values()) {
-      if ((socket.data as AdminSocketData).adminId === adminId) {
+      const data = socket.data as AdminSocketData;
+      if (data.adminId === adminId && data.sessionId === sessionId) {
         socket.disconnect(true);
       }
     }

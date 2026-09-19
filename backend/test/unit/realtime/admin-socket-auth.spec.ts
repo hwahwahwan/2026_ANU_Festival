@@ -47,4 +47,13 @@ describe('authenticateAdminSocket', () => {
 
     expect(result.adminId).toBe(ADMIN_ID);
   });
+
+  it('JWT에 jti(세션 식별자)가 있으면 sessionId로 그대로 전달한다', () => {
+    const token = jwtService.sign({ sub: ADMIN_ID, jti: 'session-socket-1' });
+    const socket = createSocket(`${ADMIN_COOKIE_NAME}=${token}`);
+
+    const result = authenticateAdminSocket(jwtService, socket);
+
+    expect(result.sessionId).toBe('session-socket-1');
+  });
 });

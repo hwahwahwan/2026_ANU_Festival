@@ -39,4 +39,20 @@ describe('verifyAdminJwt', () => {
     expect(result.adminId).toBe(ADMIN_ID);
     expect(typeof result.expiresAt).toBe('number');
   });
+
+  it('토큰에 jti가 없으면 sessionId는 undefined다', () => {
+    const token = jwtService.sign({ sub: ADMIN_ID });
+
+    const result = verifyAdminJwt(jwtService, token);
+
+    expect(result.sessionId).toBeUndefined();
+  });
+
+  it('토큰에 jti가 있으면 그 값을 그대로 sessionId로 반환한다', () => {
+    const token = jwtService.sign({ sub: ADMIN_ID, jti: 'session-xyz' });
+
+    const result = verifyAdminJwt(jwtService, token);
+
+    expect(result.sessionId).toBe('session-xyz');
+  });
 });

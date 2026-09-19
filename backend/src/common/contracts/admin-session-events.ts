@@ -7,5 +7,10 @@
 export interface AdminSessionEventMap {
   'admin.logged_out': {
     adminId: string;
+    /**
+     * 로그아웃을 요청한 JWT의 세션(기기) 식별자(jti). Realtime은 adminId가
+     * 같아도 이 값이 다른 Socket(다른 기기/탭의 로그인 세션)은 끊지 않는다.
+     */
+    sessionId: string | undefined;
   };
 }

@@ -118,11 +118,13 @@ Frontend는 `message` 문자열이 아니라 `code`를 기준으로 분기한다
 | --- | --- |
 | Cookie 이름 | `admin_access_token` |
 | 저장 방식 | JWT, HttpOnly Cookie |
-| 유효기간 | 30분 |
+| 유효기간 | 12시간 |
 | Refresh Token | 사용하지 않음 |
-| JWT Payload | `{ sub: admins.id }` |
+| JWT Payload | `{ sub: admins.id, jti: 로그인 세션(기기) 식별자 }` |
 
 만료 시 REST 요청과 기존 Socket 접근 모두 차단한다.
+
+`jti`는 로그인마다 새로 발급되는 값이며, 로그아웃 시 그 로그인 세션(기기)의 Socket만 종료하는 데 사용한다(같은 관리자가 다른 기기에서 로그인한 세션에는 영향을 주지 않는다). 서버가 별도의 세션 저장소를 두는 것은 아니며, JWT 안의 이 값만 비교한다(확정, 2026-09-20).
 
 ## 1-10. Pagination (확정)
 
