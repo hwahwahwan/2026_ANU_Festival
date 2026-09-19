@@ -7,7 +7,7 @@ function baseConfig(
     NODE_ENV: 'development',
     PORT: '3001',
     DATABASE_URL: 'postgres://localhost:5432/festival',
-    ADMIN_JWT_SECRET: 'secret',
+    ADMIN_JWT_SECRET: 'unit-test-admin-jwt-secret-with-enough-length',
     FRONTEND_ORIGIN: 'http://localhost:3000',
     COOKIE_SECURE: 'false',
     COOKIE_SAME_SITE: 'lax',
@@ -80,5 +80,51 @@ describe('validateEnv', () => {
     expect(() =>
       validateEnv(baseConfig({ DB_CONNECTION_TIMEOUT_MS: '0' })),
     ).toThrow(/DB_CONNECTION_TIMEOUT_MS/);
+  });
+
+  it('COOKIE_SECURE가 "true"/"false"가 아니면 시작을 거부한다', () => {
+    expect(() =>
+      validateEnv(baseConfig({ COOKIE_SECURE: 'TRUE' })),
+    ).toThrow(/COOKIE_SECURE/);
+  });
+
+  it('COOKIE_SAME_SITE가 허용된 값이 아니면 시작을 거부한다', () => {
+    expect(() =>
+      validateEnv(baseConfig({ COOKIE_SAME_SITE: 'laxx' })),
+    ).toThrow(/COOKIE_SAME_SITE/);
+  });
+
+  it('COOKIE_SAME_SITE=none은 COOKIE_SECURE 값과 무관하게 항상 시작을 거부한다 (동일 Origin 배포 확정, cross-site Cookie 미지원)', () => {
+    expect(() =>
+      validateEnv(
+        baseConfig({ COOKIE_SAME_SITE: 'none', COOKIE_SECURE: 'true' }),
+      ),
+    ).toThrow(/COOKIE_SAME_SITE/);
+
+    expect(() =>
+      validateEnv(
+        baseConfig({ COOKIE_SAME_SITE: 'none', COOKIE_SECURE: 'false' }),
+      ),
+    ).toThrow(/COOKIE_SAME_SITE/);
+  });
+
+  it('ADMIN_JWT_SECRET이 32자 미만이면 시작을 거부한다', () => {
+    expect(() =>
+      validateEnv(baseConfig({ ADMIN_JWT_SECRET: 'too-short-secret' })),
+    ).toThrow(/ADMIN_JWT_SECRET/);
+  });
+
+  it('ADMIN_JWT_SECRET이 32자 이상이면 통과한다', () => {
+    const result = validateEnv(
+      baseConfig({ ADMIN_JWT_SECRET: 'a'.repeat(32) }),
+    );
+
+    expect(result.ADMIN_JWT_SECRET).toBe('a'.repeat(32));
+  });
+
+  it('COOKIE_SAME_SITE=strict는 정상적으로 통과한다', () => {
+    const result = validateEnv(baseConfig({ COOKIE_SAME_SITE: 'strict' }));
+
+    expect(result.COOKIE_SAME_SITE).toBe('strict');
   });
 });

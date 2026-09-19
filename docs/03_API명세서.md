@@ -97,6 +97,7 @@ Frontend는 `message` 문자열이 아니라 `code`를 기준으로 분기한다
 | CONFLICT | 409 | 그 외 충돌(범용 fallback) |
 | ADMIN_LOGIN_FAILED | 401 | 관리자 로그인 시도 자체의 ID/PW 불일치 (신규 확정) |
 | DAILY_ORDER_LIMIT_EXCEEDED | 409 | 당일 주문번호 9999건 초과 (신규 확정) |
+| TOO_MANY_REQUESTS | 429 | rate limit 초과(범용 fallback, 신규 확정). 현재 `POST /admin/auth/login`에만 적용 |
 | INTERNAL_ERROR | 500 | 서버 내부 오류 |
 
 > `GUEST_REQUIRED`는 v0.9 Guest 제거 이후 폐기된 코드다. 사용하지 않는다.
@@ -457,7 +458,9 @@ Request Body:
 
 Response Body: 없음 (§1-7 원칙과 동일하게 body가 필요 없는 요청으로 처리한다. 로그인한 관리자 정보가 화면에 필요하면 별도 조회로 가져온다.)
 
-발생 가능한 Error Code: `VALIDATION_ERROR`, `ADMIN_LOGIN_FAILED`(§1-8 참고)
+**Rate Limit (확정):** 같은 IP에서 60초에 10회로 제한한다. 초과 시 `429 TOO_MANY_REQUESTS`로 응답한다(상세 정책은 `003_백엔드2_운영실시간.md` §7 참고).
+
+발생 가능한 Error Code: `VALIDATION_ERROR`, `ADMIN_LOGIN_FAILED`(§1-8 참고), `TOO_MANY_REQUESTS`
 
 ---
 
@@ -468,11 +471,13 @@ Response Body: 없음 (§1-7 원칙과 동일하게 body가 필요 없는 요청
 | 기능 | 로그아웃 |
 | 담당 | Backend 2 |
 | Method / URL | `POST` `/admin/auth/logout` |
-| 인증 | 관리자 |
+| 인증 | 없음 (AdminGuard를 적용하지 않는다, 아래 참고) |
 | Request Body | 없음 |
 | 성공 코드 | `204 No Content` |
 
 관리자 Cookie를 발급 시와 동일한 옵션으로 삭제한다.
+
+**AdminGuard 미적용 (확정):** 로그아웃은 Cookie/JWT의 존재·유효성과 무관하게 항상 `admin_access_token` Cookie를 삭제하고 `204`를 반환하는 멱등적 동작이다. Cookie가 없거나 JWT가 만료·변조된 상태로 호출해도 `ADMIN_UNAUTHORIZED`를 반환하지 않는다(브라우저가 어떤 인증 상태에 있든 로그아웃 시도가 항상 성공해야 하기 때문).
 
 ---
 
