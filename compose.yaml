@@ -1,0 +1,85 @@
+name: festival
+
+# Preparation only. Frontend is intentionally absent until its code exists.
+services:
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    env_file:
+      - path: ./deploy/env/postgres/.env
+        format: raw
+    # PostgreSQL 18 uses /var/lib/postgresql/18/docker inside this volume.
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      # Force scram-sha-256 even for local/loopback connections (see file
+      # header) — the image's built-in default leaves those on trust.
+      - ./deploy/postgres/pg_hba.conf:/var/lib/postgresql/18/docker/pg_hba.conf
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
+    init: true
+    # One Nest process only. Do not scale this service.
+    deploy:
+      replicas: 1
+    env_file:
+      - path: ./deploy/env/backend/.env
+        format: raw
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+    ports:
+      - "127.0.0.1:4100:4000"
+    networks:
+      - application
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db-tools:
+    profiles: [maintenance]
+    build:
+      context: ./backend
+      target: tools
+    restart: "no"
+    init: true
+    env_file:
+      - path: ./deploy/env/maintenance/.env
+        format: raw
+    networks:
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Running this service without an explicit command does not alter the DB.
+    command: ["node", "--version"]
+
+networks:
+  application:
+  database:
+    internal: true
+
+volumes:
+  postgres_data:
