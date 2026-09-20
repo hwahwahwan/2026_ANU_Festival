@@ -587,7 +587,7 @@ Response Body (`SalesView`):
   "timezone": "Asia/Seoul",
   "basis": "payment_confirmed_at",
   "asOf": "2026-09-18T05:00:00.000Z",
-  "festivalPeriod": { "from": "2026-09-18T00:00:00+09:00", "to": "2026-09-21T00:00:00+09:00" },
+  "festivalPeriod": { "from": "2026-09-19T15:00:00.000Z", "to": "2026-09-22T15:00:00.000Z" },
   "today": { "date": "2026-09-18", "quantity": 12, "amount": 42000, "refundedAmount": 0 },
   "festival": { "quantity": 12, "amount": 42000, "refundedAmount": 0 },
   "daily": [ { "date": "2026-09-18", "quantity": 12, "amount": 42000, "refundedAmount": 0 } ],
@@ -598,7 +598,7 @@ Response Body (`SalesView`):
 }
 ```
 
-`festivalPeriod`는 축제 3일 운영 기준 예시다(실제 시작일은 `FESTIVAL_START_AT` 환경변수로 배포 시 설정).
+`festivalPeriod`는 축제 3일 운영(9/20~9/22, `FESTIVAL_START_AT=2026-09-20`/`FESTIVAL_END_AT=2026-09-22`) 기준 예시다(실제 날짜는 배포 시 설정). `FESTIVAL_START_AT`/`FESTIVAL_END_AT` 환경변수 자체는 시각이 아니라 KST 날짜(`YYYY-MM-DD`, 둘 다 inclusive)이며, `festivalPeriod.to`는 종료일 다음날 KST 자정(배타적 상한)이다 — 자세한 형식·검증 규칙은 `001_백엔드_공통.md` §46, `003_백엔드2_운영실시간.md` §20 참고. `asOf`/`festivalPeriod.from`/`festivalPeriod.to`를 포함한 모든 시각 필드는 `Date.toISOString()`(UTC, `Z` 접미사)로 직렬화한다 — `01_프론트_백엔드_공통사항.md` §6이 요구하는 ISO 8601 형식을 만족하는 여러 표기 중 하나이며, `+09:00` 오프셋 표기와 가리키는 시각은 동일하다.
 
 **환불 반영 (확정):** `today`/`festival`/`daily`의 각 합계에 `refundedAmount`를 추가한다. 이는 해당 날짜에 **환불이 처리된**(`order_refunds.processed_at` 기준) 금액의 합이며, 원래 결제된 날짜가 아니라 환불을 처리한 날짜에 집계한다. `amount`(원 결제액)는 환불 여부와 무관하게 그대로 유지하고 수정하지 않는다. 순매출이 필요하면 프론트엔드가 `amount - refundedAmount`로 계산한다. `byMenu`는 메뉴별 환불 배분을 지원하지 않으므로(전액 환불만 지원) `refundedAmount`를 넣지 않는다.
 
