@@ -8,3 +8,5 @@ process.env.FRONTEND_ORIGIN ??= 'http://localhost:3000';
 process.env.COOKIE_SECURE ??= 'false';
 process.env.COOKIE_SAME_SITE ??= 'lax';
 process.env.SOCKET_PATH ??= '/socket.io';
+process.env.FESTIVAL_START_AT ??= '2020-01-01';
+process.env.FESTIVAL_END_AT ??= '2030-12-31';
