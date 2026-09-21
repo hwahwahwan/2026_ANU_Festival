@@ -50,7 +50,7 @@ type OrderStatus =
 
 Frontend와 Backend는 이 값을 그대로 사용한다. 화면 문구(예: "입금 확인 대기")로의 변환은 Frontend 책임이다.
 
-환불 관련 상태(`REFUNDED` 등)는 정책 확정 전까지 추가하지 않는다.
+환불 관련 상태(`REFUNDED` 등)는 추가하지 않는다(확정, 환불해도 `OrderStatus`는 변경되지 않는다).
 
 ## 1-6. Content-Type / Validation
 
