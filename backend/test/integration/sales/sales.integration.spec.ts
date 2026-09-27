@@ -139,8 +139,8 @@ describe('Sales (실제 PostgreSQL integration)', () => {
       const orderNumber = `TEST-${randomUUID().slice(0, 8)}`;
       const orderResult = await client.query<{ id: string }>(
         `INSERT INTO orders
-           (order_number, order_request_id, customer_name, customer_phone, status, total_price, payment_confirmed_at)
-         VALUES ($1, $2, $6, '010-0000-0000', $3, $4, $5)
+           (order_number, order_request_id, request_fingerprint, customer_name, customer_phone, status, total_price, payment_confirmed_at)
+         VALUES ($1, $2, 'sales-fixture', $6, '010-0000-0000', $3, $4, $5)
          RETURNING id`,
         [
           orderNumber,

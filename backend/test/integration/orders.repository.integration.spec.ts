@@ -64,6 +64,7 @@ describe('Orders 관련 Repository (실제 PostgreSQL integration)', () => {
       const order = await ordersRepository.create(client, {
         orderNumber,
         orderRequestId,
+        requestFingerprint: `fp-${orderRequestId}`,
         customerName,
         customerPhone: '010-1234-5678',
         totalPrice: 7000,
