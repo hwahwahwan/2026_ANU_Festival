@@ -17,6 +17,7 @@ import { AuthenticatedAdmin } from '../common/contracts/admin-principal';
 import { OrdersService } from './orders.service';
 import { ListAdminOrdersQueryDto } from './dto/list-admin-orders-query.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { CreateRefundDto } from './dto/create-refund.dto';
 import { AdminOrderListView, AdminOrderView } from '../common/contracts/order-view';
 import { OrderHistoryView } from '../common/contracts/order-history-view';
 
@@ -55,6 +56,15 @@ export class AdminOrdersController {
     @CurrentAdmin() admin: AuthenticatedAdmin,
   ): Promise<AdminOrderView> {
     return this.ordersService.cancel(orderId, admin);
+  }
+
+  @Post(':orderId/refunds')
+  refund(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @Body() dto: CreateRefundDto,
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+  ): Promise<AdminOrderView> {
+    return this.ordersService.refund(orderId, dto, admin);
   }
 
   @Get(':orderId/history')
