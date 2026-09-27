@@ -76,11 +76,41 @@
 
 ## 팀원 및 역할
 
-| 팀원 | 역할 | 담당 |
-| --- | --- | --- |
-| [@LAPIIZ](https://github.com/LAPIIZ) | Frontend | 고객 및 관리자 페이지 |
-| [@byunsanghun](https://github.com/byunsanghun) | Backend 1 | 주문 · 결제 |
-| [@hwahwahwan](https://github.com/hwahwahwan) | Backend 2 | 관리자 인증 · 메뉴 · 계좌 · 매출 · 실시간 통신 · 배포 |
+<table>
+  <tr>
+    <td align="center"><b>Frontend</b></td>
+    <td align="center"><b>Backend 1</b></td>
+    <td align="center"><b>Backend 2</b></td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/LAPIIZ">
+        <img src="https://github.com/LAPIIZ.png" width="120px;" alt="LAPIIZ"/>
+        <br />
+        <sub><b>@LAPIIZ</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/byunsanghun">
+        <img src="https://github.com/byunsanghun.png" width="120px;" alt="byunsanghun"/>
+        <br />
+        <sub><b>@byunsanghun</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/hwahwahwan">
+        <img src="https://github.com/hwahwahwan.png" width="120px;" alt="hwahwahwan"/>
+        <br />
+        <sub><b>@hwahwahwan</b></sub>
+      </a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">고객 및 관리자 페이지</td>
+    <td align="center">주문 · 결제</td>
+    <td align="center">관리자 인증 · 메뉴 · 계좌<br/>매출 · 실시간 통신 · 배포</td>
+  </tr>
+</table>
 
 ## 실행 방법
 
