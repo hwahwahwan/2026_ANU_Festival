@@ -8,22 +8,42 @@ import {
   ORDER_EVENT_PUBLISHER,
   OrderEventPublisher,
 } from '../common/events/order-event.publisher';
-import { AdminOrderListView, OrderView } from '../common/contracts/order-view';
+import { AdminOrderListView, AdminOrderView, OrderView } from '../common/contracts/order-view';
+import { OrderHistoryView } from '../common/contracts/order-history-view';
+import { AuthenticatedAdmin } from '../common/contracts/admin-principal';
+import { OrderStatus } from '../common/contracts/order-status';
 import { OrdersRepository, OrderRow } from './orders.repository';
 import { OrderItemsRepository, OrderItemRow } from './order-items.repository';
+import { OrderHistoryRepository } from './order-history.repository';
 import { OrderNumberService } from './order-number.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { ListAdminOrdersQueryDto } from './dto/list-admin-orders-query.dto';
+import { PatchableOrderStatus } from './dto/update-order-status.dto';
 import { toAdminOrderView, toOrderView } from './order-view.mapper';
+import { toOrderHistoryView } from './order-history.mapper';
 import { computeRequestFingerprint } from './order-fingerprint.util';
 import { mergeOrderItems, OrderItemInput } from './merge-order-items.util';
 import {
   decodeAdminOrderCursor,
   encodeAdminOrderCursor,
 } from './admin-order-cursor.util';
+import { ORDER_HISTORY_ACTION } from './constants/order-history-action.constants';
 
 const ORDER_REQUEST_ID_UNIQUE_VIOLATION = '23505';
 const DEFAULT_ADMIN_ORDERS_LIMIT = 20;
+
+/**
+ * §18: PATCH /admin/orders/:orderId/status가 허용하는 전이만 여기 있다.
+ * 입금 확인(PAYMENT_PENDING → ACCEPTED)은 별도 API(payment-confirmation)
+ * 전용이라 이 맵에 없다 — 일반 status PATCH로 ACCEPTED를 만들 수 없다.
+ */
+const STATUS_TRANSITIONS: Partial<
+  Record<OrderStatus, Partial<Record<PatchableOrderStatus, (typeof ORDER_HISTORY_ACTION)[keyof typeof ORDER_HISTORY_ACTION]>>>
+> = {
+  ACCEPTED: { COOKING: ORDER_HISTORY_ACTION.COOKING_STARTED },
+  COOKING: { READY: ORDER_HISTORY_ACTION.READY },
+  READY: { COMPLETED: ORDER_HISTORY_ACTION.COMPLETED },
+};
 
 function isOrderRequestIdConflict(error: unknown): boolean {
   return (
@@ -40,6 +60,7 @@ export class OrdersService {
     private readonly database: DatabaseService,
     private readonly ordersRepository: OrdersRepository,
     private readonly orderItemsRepository: OrderItemsRepository,
+    private readonly orderHistoryRepository: OrderHistoryRepository,
     private readonly orderNumberService: OrderNumberService,
     @Inject(MENU_READER) private readonly menuReader: MenuReader,
     @Inject(ORDER_EVENT_PUBLISHER)
@@ -108,6 +129,103 @@ export class OrdersService {
     const nextCursor = hasMore && last ? encodeAdminOrderCursor({ id: last.id }) : null;
 
     return { items, nextCursor };
+  }
+
+  async confirmPayment(
+    orderId: string,
+    admin: AuthenticatedAdmin,
+  ): Promise<AdminOrderView> {
+    const view = await this.database.withTransaction(async (client) => {
+      const order = await this.ordersRepository.findByIdForUpdate(client, orderId);
+
+      if (!order) {
+        throw new ApiException(ERROR_CODE.ORDER_NOT_FOUND, '주문을 찾을 수 없습니다.');
+      }
+
+      if (order.status !== 'PAYMENT_PENDING') {
+        throw new ApiException(
+          ERROR_CODE.ORDER_STATE_CONFLICT,
+          '입금 확인할 수 없는 주문 상태입니다.',
+        );
+      }
+
+      const updated = await this.ordersRepository.updateStatus(client, orderId, 'ACCEPTED');
+
+      await this.orderHistoryRepository.create(client, {
+        orderId,
+        action: ORDER_HISTORY_ACTION.PAYMENT_CONFIRMED,
+        fromStatus: order.status,
+        toStatus: updated.status,
+        actorType: 'ADMIN',
+        actorId: admin.adminId,
+      });
+
+      const items = await this.orderItemsRepository.findByOrderId(client, orderId);
+
+      return toAdminOrderView(updated, items);
+    });
+
+    this.events.publish('order.updated', { orderId, status: view.status });
+
+    return view;
+  }
+
+  async changeStatus(
+    orderId: string,
+    targetStatus: PatchableOrderStatus,
+    admin: AuthenticatedAdmin,
+  ): Promise<AdminOrderView> {
+    const view = await this.database.withTransaction(async (client) => {
+      const order = await this.ordersRepository.findByIdForUpdate(client, orderId);
+
+      if (!order) {
+        throw new ApiException(ERROR_CODE.ORDER_NOT_FOUND, '주문을 찾을 수 없습니다.');
+      }
+
+      const action = STATUS_TRANSITIONS[order.status]?.[targetStatus];
+
+      if (!action) {
+        throw new ApiException(
+          ERROR_CODE.ORDER_STATE_CONFLICT,
+          '현재 주문 상태에서 허용되지 않는 상태 변경입니다.',
+        );
+      }
+
+      const updated = await this.ordersRepository.updateStatus(
+        client,
+        orderId,
+        targetStatus,
+      );
+
+      await this.orderHistoryRepository.create(client, {
+        orderId,
+        action,
+        fromStatus: order.status,
+        toStatus: updated.status,
+        actorType: 'ADMIN',
+        actorId: admin.adminId,
+      });
+
+      const items = await this.orderItemsRepository.findByOrderId(client, orderId);
+
+      return toAdminOrderView(updated, items);
+    });
+
+    this.events.publish('order.updated', { orderId, status: view.status });
+
+    return view;
+  }
+
+  async getHistory(orderId: string): Promise<OrderHistoryView[]> {
+    const order = await this.ordersRepository.findById(this.database, orderId);
+
+    if (!order) {
+      throw new ApiException(ERROR_CODE.ORDER_NOT_FOUND, '주문을 찾을 수 없습니다.');
+    }
+
+    const rows = await this.orderHistoryRepository.findByOrderId(this.database, orderId);
+
+    return rows.map(toOrderHistoryView);
   }
 
   private async groupItemsByOrderId(
@@ -202,6 +320,15 @@ export class OrdersService {
         };
       }),
     );
+
+    await this.orderHistoryRepository.create(client, {
+      orderId: order.id,
+      action: ORDER_HISTORY_ACTION.ORDER_CREATED,
+      fromStatus: null,
+      toStatus: order.status,
+      actorType: 'CUSTOMER',
+      actorId: null,
+    });
 
     return toOrderView(order, items);
   }

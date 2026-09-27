@@ -50,6 +50,10 @@ describe('GET /admin/orders (실제 PostgreSQL)', () => {
   afterEach(async () => {
     if (createdOrderIds.length > 0) {
       await databaseService.query(
+        'DELETE FROM order_history WHERE order_id = ANY($1::uuid[])',
+        [createdOrderIds],
+      );
+      await databaseService.query(
         'DELETE FROM order_items WHERE order_id = ANY($1::uuid[])',
         [createdOrderIds],
       );

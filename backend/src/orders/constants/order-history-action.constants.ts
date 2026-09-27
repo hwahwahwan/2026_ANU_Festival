@@ -1,0 +1,20 @@
+export const ORDER_HISTORY_ACTION = {
+  ORDER_CREATED: 'ORDER_CREATED',
+  PAYMENT_CONFIRMED: 'PAYMENT_CONFIRMED',
+  COOKING_STARTED: 'COOKING_STARTED',
+  READY: 'READY',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED',
+  REFUNDED: 'REFUNDED',
+} as const;
+
+export type OrderHistoryAction =
+  (typeof ORDER_HISTORY_ACTION)[keyof typeof ORDER_HISTORY_ACTION];
+
+export const ORDER_HISTORY_ACTOR_TYPE = {
+  CUSTOMER: 'CUSTOMER',
+  ADMIN: 'ADMIN',
+} as const;
+
+export type OrderHistoryActorType =
+  (typeof ORDER_HISTORY_ACTOR_TYPE)[keyof typeof ORDER_HISTORY_ACTOR_TYPE];
