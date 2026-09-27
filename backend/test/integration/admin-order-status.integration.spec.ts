@@ -10,8 +10,8 @@ import { AdminAuthModule } from '../../src/admin-auth/admin-auth.module';
 import { DatabaseService } from '../../src/database/database.service';
 
 /**
- * 입금 확인 / 상태 변경 / History 조회 (실제 PostgreSQL + 실제 AdminGuard).
- * §17~§21, §2-2 payment-confirmation·status·history 계약을 검증한다.
+ * 입금 확인 / 상태 변경 / 취소 / 환불 / History 조회 (실제 PostgreSQL + 실제 AdminGuard).
+ * §17~§21, §23~§24, §2-2 payment-confirmation·status·cancel·refunds·history 계약을 검증한다.
  */
 const TEST_MENU_NAME_PREFIX = '_admin_order_status_it_';
 
@@ -45,6 +45,10 @@ describe('주문 상태 변경 + OrderHistory (실제 PostgreSQL)', () => {
 
   afterEach(async () => {
     if (createdOrderIds.length > 0) {
+      await databaseService.query(
+        'DELETE FROM order_refunds WHERE order_id = ANY($1::uuid[])',
+        [createdOrderIds],
+      );
       await databaseService.query(
         'DELETE FROM order_history WHERE order_id = ANY($1::uuid[])',
         [createdOrderIds],
@@ -117,6 +121,16 @@ describe('주문 상태 변경 + OrderHistory (실제 PostgreSQL)', () => {
     return request(app.getHttpServer())
       .post(`/admin/orders/${orderId}/cancel`)
       .set('Cookie', adminCookie);
+  }
+
+  function refund(
+    orderId: string,
+    body: { refundRequestId: string; reason?: string },
+  ) {
+    return request(app.getHttpServer())
+      .post(`/admin/orders/${orderId}/refunds`)
+      .set('Cookie', adminCookie)
+      .send(body);
   }
 
   describe('POST /admin/orders/:orderId/payment-confirmation', () => {
@@ -325,6 +339,186 @@ describe('주문 상태 변경 + OrderHistory (실제 PostgreSQL)', () => {
       expect(confirmResult.status).toBe(409);
       expect(statusResult.status).toBe(409);
       expect(cancelAgainResult.status).toBe(409);
+    });
+  });
+
+  describe('POST /admin/orders/:orderId/refunds', () => {
+    it('[20] 관리자 Cookie 없이 요청하면 401을 반환한다', async () => {
+      const orderId = await createOrder();
+
+      const response = await request(app.getHttpServer()).post(
+        `/admin/orders/${orderId}/refunds`,
+      );
+
+      expect(response.status).toBe(401);
+      expect(response.body.code).toBe('ADMIN_UNAUTHORIZED');
+    });
+
+    it('[21] 입금 확인된 주문을 환불하면 201을 반환하고 OrderStatus는 그대로 유지된다', async () => {
+      const orderId = await createOrder();
+      await confirmPayment(orderId);
+      const refundRequestId = randomUUID();
+
+      const response = await refund(orderId, { refundRequestId, reason: '고객 요청' });
+
+      expect(response.status).toBe(201);
+      expect(response.body).toMatchObject({ id: orderId, status: 'ACCEPTED' });
+
+      const refundRow = await databaseService.query<{
+        amount: number;
+        processed_by: string;
+        reason: string;
+      }>('SELECT amount, processed_by, reason FROM order_refunds WHERE order_id = $1', [
+        orderId,
+      ]);
+      expect(refundRow.rows[0]).toMatchObject({
+        amount: response.body.totalPrice,
+        processed_by: adminId,
+        reason: '고객 요청',
+      });
+    });
+
+    it.each(['PAYMENT_PENDING', 'CANCELLED'] as const)(
+      '[22] %s 상태인 주문은 환불할 수 없고 409를 반환한다',
+      async (targetStatus) => {
+        const orderId = await createOrder();
+        if (targetStatus === 'CANCELLED') {
+          await cancel(orderId);
+        }
+
+        const response = await refund(orderId, { refundRequestId: randomUUID() });
+
+        expect(response.status).toBe(409);
+        expect(response.body.code).toBe('ORDER_STATE_CONFLICT');
+      },
+    );
+
+    it('[23] 존재하지 않는 orderId면 404를 반환한다', async () => {
+      const response = await refund('00000000-0000-4000-8000-000000000000', {
+        refundRequestId: randomUUID(),
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.body.code).toBe('ORDER_NOT_FOUND');
+    });
+
+    it('[24] 같은 refundRequestId로 재요청하면 새 환불을 만들지 않고 기존 결과를 반환한다', async () => {
+      const orderId = await createOrder();
+      await confirmPayment(orderId);
+      const refundRequestId = randomUUID();
+
+      const first = await refund(orderId, { refundRequestId });
+      const second = await refund(orderId, { refundRequestId });
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+
+      const countResult = await databaseService.query<{ count: string }>(
+        'SELECT COUNT(*) FROM order_refunds WHERE order_id = $1',
+        [orderId],
+      );
+      expect(countResult.rows[0].count).toBe('1');
+    });
+
+    it('[25] 이미 다른 refundRequestId로 환불된 주문을 또 환불하려 하면 409를 반환한다', async () => {
+      const orderId = await createOrder();
+      await confirmPayment(orderId);
+      await refund(orderId, { refundRequestId: randomUUID() });
+
+      const response = await refund(orderId, { refundRequestId: randomUUID() });
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('ORDER_STATE_CONFLICT');
+    });
+
+    it('[26] 같은 주문에 서로 다른 refundRequestId로 동시에 환불을 요청해도 하나만 성공한다', async () => {
+      const orderId = await createOrder();
+      await confirmPayment(orderId);
+
+      const [first, second] = await Promise.all([
+        refund(orderId, { refundRequestId: randomUUID() }),
+        refund(orderId, { refundRequestId: randomUUID() }),
+      ]);
+
+      const statuses = [first.status, second.status].sort();
+      expect(statuses).toEqual([201, 409]);
+
+      const countResult = await databaseService.query<{ count: string }>(
+        'SELECT COUNT(*) FROM order_refunds WHERE order_id = $1',
+        [orderId],
+      );
+      expect(countResult.rows[0].count).toBe('1');
+    });
+
+    it('[27] 환불 후 History에 REFUNDED 이력이 남고 원 주문 데이터(총액/상태)는 바뀌지 않는다', async () => {
+      const orderId = await createOrder();
+      await confirmPayment(orderId);
+      const beforeRefund = await databaseService.query<{ total_price: number }>(
+        'SELECT total_price FROM orders WHERE id = $1',
+        [orderId],
+      );
+
+      await refund(orderId, { refundRequestId: randomUUID(), reason: '테스트 환불' });
+
+      const history = await getHistory(orderId);
+      expect(history.body.map((h: { action: string }) => h.action)).toEqual([
+        'ORDER_CREATED',
+        'PAYMENT_CONFIRMED',
+        'REFUNDED',
+      ]);
+      expect(history.body[2]).toMatchObject({
+        actorType: 'ADMIN',
+        actorId: adminId,
+        reason: '테스트 환불',
+        metadata: { amount: beforeRefund.rows[0].total_price },
+      });
+
+      const afterRefund = await databaseService.query<{
+        total_price: number;
+        status: string;
+      }>('SELECT total_price, status FROM orders WHERE id = $1', [orderId]);
+      expect(afterRefund.rows[0].total_price).toBe(beforeRefund.rows[0].total_price);
+      expect(afterRefund.rows[0].status).toBe('ACCEPTED');
+    });
+
+    it('[28] 같은 주문에 같은 refundRequestId로 동시에 요청해도(더블클릭) 둘 다 201이고 환불은 1건만 생성된다', async () => {
+      const orderId = await createOrder();
+      await confirmPayment(orderId);
+      const refundRequestId = randomUUID();
+
+      const [first, second] = await Promise.all([
+        refund(orderId, { refundRequestId }),
+        refund(orderId, { refundRequestId }),
+      ]);
+
+      expect([first.status, second.status]).toEqual([201, 201]);
+
+      const countResult = await databaseService.query<{ count: string }>(
+        'SELECT COUNT(*) FROM order_refunds WHERE order_id = $1',
+        [orderId],
+      );
+      expect(countResult.rows[0].count).toBe('1');
+    });
+
+    it('[29] 다른 주문에 이미 쓰인 refundRequestId를 재사용하면 500이 아니라 명확한 오류를 반환한다', async () => {
+      const orderIdA = await createOrder();
+      const orderIdB = await createOrder();
+      await confirmPayment(orderIdA);
+      await confirmPayment(orderIdB);
+      const refundRequestId = randomUUID();
+
+      const first = await refund(orderIdA, { refundRequestId });
+      const second = await refund(orderIdB, { refundRequestId });
+
+      expect(first.status).toBe(201);
+      expect(second.status).not.toBe(500);
+      expect(second.body.code).toBe('IDEMPOTENCY_CONFLICT');
+
+      const countResult = await databaseService.query<{ count: string }>(
+        'SELECT COUNT(*) FROM order_refunds WHERE refund_request_id = $1',
+        [refundRequestId],
+      );
+      expect(countResult.rows[0].count).toBe('1');
     });
   });
 

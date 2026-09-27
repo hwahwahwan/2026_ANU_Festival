@@ -3,6 +3,10 @@ import { DatabaseService } from '../../../src/database/database.service';
 import { OrdersRepository, OrderRow } from '../../../src/orders/orders.repository';
 import { OrderItemsRepository } from '../../../src/orders/order-items.repository';
 import { OrderHistoryRepository } from '../../../src/orders/order-history.repository';
+import {
+  OrderRefundsRepository,
+  OrderRefundRow,
+} from '../../../src/orders/order-refunds.repository';
 import { OrderNumberService } from '../../../src/orders/order-number.service';
 import { MenuReader, MenuSnapshot } from '../../../src/common/contracts/menu-reader';
 import { OrderEventPublisher } from '../../../src/common/events/order-event.publisher';
@@ -66,6 +70,12 @@ function createHarness(menus: MenuSnapshot[]) {
     findByOrderId: jest.fn().mockResolvedValue([]),
   } as unknown as jest.Mocked<OrderHistoryRepository>;
 
+  const orderRefundsRepository = {
+    create: jest.fn(),
+    findByOrderId: jest.fn().mockResolvedValue(null),
+    findByRefundRequestId: jest.fn().mockResolvedValue(null),
+  } as unknown as jest.Mocked<OrderRefundsRepository>;
+
   const orderNumberService = {
     issue: jest.fn().mockResolvedValue('0918-0001'),
   } as unknown as jest.Mocked<OrderNumberService>;
@@ -83,6 +93,7 @@ function createHarness(menus: MenuSnapshot[]) {
     ordersRepository,
     orderItemsRepository,
     orderHistoryRepository,
+    orderRefundsRepository,
     orderNumberService,
     menuReader,
     events,
@@ -93,6 +104,7 @@ function createHarness(menus: MenuSnapshot[]) {
     database,
     ordersRepository,
     orderItemsRepository,
+    orderRefundsRepository,
     orderHistoryRepository,
     orderNumberService,
     menuReader,
@@ -776,5 +788,187 @@ describe('OrdersService.getHistory', () => {
       new ApiException(ERROR_CODE.ORDER_NOT_FOUND, '주문을 찾을 수 없습니다.'),
     );
     expect(orderHistoryRepository.findByOrderId).not.toHaveBeenCalled();
+  });
+});
+
+function refundDto(overrides: Partial<{ refundRequestId: string; reason?: string }> = {}) {
+  return {
+    refundRequestId: '660e8400-e29b-41d4-a716-446655440000',
+    ...overrides,
+  };
+}
+
+function orderRefundRow(overrides: Partial<OrderRefundRow> = {}): OrderRefundRow {
+  return {
+    id: 'refund-1',
+    order_id: 'order-1',
+    refund_request_id: '660e8400-e29b-41d4-a716-446655440000',
+    amount: 7000,
+    processed_at: new Date('2026-09-18T02:00:00Z'),
+    processed_by: 'admin-1',
+    reason: null,
+    ...overrides,
+  };
+}
+
+describe('OrdersService.refund', () => {
+  it.each(['ACCEPTED', 'COOKING', 'READY', 'COMPLETED'] as const)(
+    '%s 상태인 주문은 환불 기록을 남기고 상태는 그대로 유지한다',
+    async (status) => {
+      const {
+        service,
+        ordersRepository,
+        orderItemsRepository,
+        orderHistoryRepository,
+        orderRefundsRepository,
+        events,
+      } = createHarness([]);
+      ordersRepository.findByIdForUpdate.mockResolvedValue(
+        orderRow({ status, total_price: 7000 }),
+      );
+      orderItemsRepository.findByOrderId.mockResolvedValue([]);
+
+      const result = await service.refund('order-1', refundDto({ reason: '고객 요청' }), ADMIN);
+
+      expect(ordersRepository.findByIdForUpdate).toHaveBeenCalledWith(FAKE_CLIENT, 'order-1');
+      expect(orderRefundsRepository.create).toHaveBeenCalledWith(FAKE_CLIENT, {
+        orderId: 'order-1',
+        refundRequestId: '660e8400-e29b-41d4-a716-446655440000',
+        amount: 7000,
+        processedBy: 'admin-1',
+        reason: '고객 요청',
+      });
+      expect(orderHistoryRepository.create).toHaveBeenCalledWith(FAKE_CLIENT, {
+        orderId: 'order-1',
+        action: 'REFUNDED',
+        fromStatus: null,
+        toStatus: null,
+        actorType: 'ADMIN',
+        actorId: 'admin-1',
+        reason: '고객 요청',
+        metadata: { amount: 7000 },
+      });
+      expect(result.status).toBe(status);
+      expect(events.publish).toHaveBeenCalledWith('order.updated', {
+        orderId: 'order-1',
+        status,
+      });
+    },
+  );
+
+  it.each(['PAYMENT_PENDING', 'CANCELLED'] as const)(
+    '%s 상태인 주문은 환불할 수 없고 ORDER_STATE_CONFLICT를 던진다',
+    async (status) => {
+      const { service, ordersRepository, orderRefundsRepository } = createHarness([]);
+      ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status }));
+
+      await expect(service.refund('order-1', refundDto(), ADMIN)).rejects.toMatchObject(
+        new ApiException(ERROR_CODE.ORDER_STATE_CONFLICT, '환불할 수 없는 주문 상태입니다.'),
+      );
+      expect(orderRefundsRepository.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('주문이 없으면 ORDER_NOT_FOUND를 던진다', async () => {
+    const { service, ordersRepository } = createHarness([]);
+    ordersRepository.findByIdForUpdate.mockResolvedValue(null);
+
+    await expect(service.refund('missing', refundDto(), ADMIN)).rejects.toMatchObject(
+      new ApiException(ERROR_CODE.ORDER_NOT_FOUND, '주문을 찾을 수 없습니다.'),
+    );
+  });
+
+  it('같은 refundRequestId로 재요청하면 새 환불을 만들지 않고 기존 결과를 반환한다', async () => {
+    const { service, ordersRepository, orderItemsRepository, orderRefundsRepository, events } =
+      createHarness([]);
+    orderRefundsRepository.findByOrderId.mockResolvedValue(orderRefundRow());
+    ordersRepository.findById.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+    orderItemsRepository.findByOrderId.mockResolvedValue([]);
+
+    const result = await service.refund('order-1', refundDto(), ADMIN);
+
+    expect(orderRefundsRepository.create).not.toHaveBeenCalled();
+    expect(result.status).toBe('ACCEPTED');
+    expect(events.publish).not.toHaveBeenCalled();
+  });
+
+  it('이미 다른 refundRequestId로 환불된 주문이면 ORDER_STATE_CONFLICT를 던진다', async () => {
+    const { service, orderRefundsRepository, ordersRepository } = createHarness([]);
+    orderRefundsRepository.findByOrderId.mockResolvedValue(
+      orderRefundRow({ refund_request_id: 'other-request-id' }),
+    );
+
+    await expect(service.refund('order-1', refundDto(), ADMIN)).rejects.toMatchObject(
+      new ApiException(ERROR_CODE.ORDER_STATE_CONFLICT, '이미 환불된 주문입니다.'),
+    );
+    expect(ordersRepository.findById).not.toHaveBeenCalled();
+    expect(ordersRepository.findByIdForUpdate).not.toHaveBeenCalled();
+  });
+
+  it('동시에 같은 주문에 환불이 경합하면(order_id UNIQUE 위반) 방금 커밋된 환불을 재조회해 반환한다', async () => {
+    const { service, ordersRepository, orderItemsRepository, orderRefundsRepository, events } =
+      createHarness([]);
+    ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+    ordersRepository.findById.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+    orderRefundsRepository.create.mockRejectedValue(
+      uniqueViolation('order_refunds_order_id_key'),
+    );
+    orderRefundsRepository.findByOrderId
+      .mockResolvedValueOnce(null) // 최초 조회 시점에는 아직 없었음
+      .mockResolvedValueOnce(orderRefundRow()); // 경합 후 재조회하면 존재함
+    orderItemsRepository.findByOrderId.mockResolvedValue([]);
+
+    const result = await service.refund('order-1', refundDto(), ADMIN);
+
+    expect(result.status).toBe('ACCEPTED');
+    expect(events.publish).not.toHaveBeenCalled();
+  });
+
+  it('같은 주문에 같은 refundRequestId로 동시 요청이 경합해 refund_request_id UNIQUE 위반이 나도 기존 결과를 반환한다', async () => {
+    const { service, ordersRepository, orderItemsRepository, orderRefundsRepository, events } =
+      createHarness([]);
+    ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+    ordersRepository.findById.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+    orderRefundsRepository.create.mockRejectedValue(
+      uniqueViolation('order_refunds_refund_request_id_key'),
+    );
+    orderRefundsRepository.findByOrderId.mockResolvedValue(null); // order_id 쪽엔 아직 없음
+    orderRefundsRepository.findByRefundRequestId.mockResolvedValue(
+      orderRefundRow({ order_id: 'order-1' }),
+    );
+    orderItemsRepository.findByOrderId.mockResolvedValue([]);
+
+    const result = await service.refund('order-1', refundDto(), ADMIN);
+
+    expect(result.status).toBe('ACCEPTED');
+    expect(events.publish).not.toHaveBeenCalled();
+  });
+
+  it('다른 주문에 이미 쓰인 refundRequestId를 재사용하면 500 대신 IDEMPOTENCY_CONFLICT를 던진다', async () => {
+    const { service, ordersRepository, orderRefundsRepository } = createHarness([]);
+    ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+    orderRefundsRepository.create.mockRejectedValue(
+      uniqueViolation('order_refunds_refund_request_id_key'),
+    );
+    orderRefundsRepository.findByOrderId.mockResolvedValue(null);
+    orderRefundsRepository.findByRefundRequestId.mockResolvedValue(
+      orderRefundRow({ order_id: 'other-order' }),
+    );
+
+    await expect(service.refund('order-1', refundDto(), ADMIN)).rejects.toMatchObject(
+      new ApiException(
+        ERROR_CODE.IDEMPOTENCY_CONFLICT,
+        '이미 다른 주문에 사용된 refundRequestId입니다.',
+      ),
+    );
+  });
+
+  it('환불과 무관한 다른 UNIQUE 위반은 그대로 전파한다', async () => {
+    const { service, ordersRepository, orderRefundsRepository } = createHarness([]);
+    ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+    const error = uniqueViolation('orders_order_number_key');
+    orderRefundsRepository.create.mockRejectedValue(error);
+
+    await expect(service.refund('order-1', refundDto(), ADMIN)).rejects.toBe(error);
   });
 });
