@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PoolClient } from 'pg';
+import { Queryable } from '../database/database.types';
 import { OrderStatus } from '../common/contracts/order-status';
 
 export interface OrderRow {
@@ -42,5 +43,22 @@ export class OrdersRepository {
     );
 
     return result.rows[0];
+  }
+
+  async findByCustomerNameAndOrderNumber(
+    db: Queryable,
+    customerName: string,
+    orderNumber: string,
+  ): Promise<OrderRow | null> {
+    const result = await db.query<OrderRow>(
+      `SELECT
+         id, order_number, order_request_id, customer_name, customer_phone,
+         status, total_price, payment_confirmed_at, created_at
+       FROM orders
+       WHERE customer_name = $1 AND order_number = $2`,
+      [customerName, orderNumber],
+    );
+
+    return result.rows[0] ?? null;
   }
 }
