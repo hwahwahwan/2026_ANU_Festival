@@ -9,6 +9,7 @@ import { CreateOrderDto } from '../../../src/orders/dto/create-order.dto';
 import { ApiException } from '../../../src/common/filters/api.exception';
 import { ERROR_CODE } from '../../../src/common/contracts/api-error';
 import { computeRequestFingerprint } from '../../../src/orders/order-fingerprint.util';
+import { encodeAdminOrderCursor } from '../../../src/orders/admin-order-cursor.util';
 
 const MENU_A: MenuSnapshot = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -46,11 +47,13 @@ function createHarness(menus: MenuSnapshot[]) {
   const ordersRepository = {
     create: jest.fn(),
     findByOrderRequestId: jest.fn().mockResolvedValue(null),
+    findPage: jest.fn(),
   } as unknown as jest.Mocked<OrdersRepository>;
 
   const orderItemsRepository = {
     createMany: jest.fn(),
     findByOrderId: jest.fn(),
+    findByOrderIds: jest.fn().mockResolvedValue([]),
   } as unknown as jest.Mocked<OrderItemsRepository>;
 
   const orderNumberService = {
@@ -416,5 +419,117 @@ describe('OrdersService.create (멱등성)', () => {
     ordersRepository.create.mockRejectedValue(error);
 
     await expect(service.create(createDto())).rejects.toBe(error);
+  });
+});
+
+function orderRow(overrides: Partial<OrderRow> = {}): OrderRow {
+  return {
+    id: 'order-1',
+    order_number: '0918-0001',
+    order_request_id: '550e8400-e29b-41d4-a716-446655440000',
+    request_fingerprint: 'fp-1',
+    customer_name: '홍길동',
+    customer_phone: '010-1234-5678',
+    status: 'PAYMENT_PENDING',
+    total_price: 7000,
+    payment_confirmed_at: null,
+    created_at: new Date('2026-09-18T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+describe('OrdersService.listForAdmin', () => {
+  it('기본 limit(20)으로 조회하고, 결과가 limit 이하면 nextCursor는 null이다', async () => {
+    const { service, ordersRepository } = createHarness([]);
+    const rows = [orderRow({ id: 'order-1' }), orderRow({ id: 'order-2' })];
+    ordersRepository.findPage.mockResolvedValue(rows);
+
+    const result = await service.listForAdmin({});
+
+    expect(ordersRepository.findPage).toHaveBeenCalledWith(
+      expect.anything(),
+      21,
+      undefined,
+    );
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]).toMatchObject({ id: 'order-1', customerPhone: '010-1234-5678' });
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('Repository가 limit+1건을 반환하면(더 있음) limit건만 반환하고 nextCursor를 발급한다', async () => {
+    const { service, ordersRepository } = createHarness([]);
+    const rows = [
+      orderRow({ id: 'order-1', created_at: new Date('2026-09-18T02:00:00Z') }),
+      orderRow({ id: 'order-2', created_at: new Date('2026-09-18T01:00:00Z') }),
+    ];
+    ordersRepository.findPage.mockResolvedValue(rows);
+
+    const result = await service.listForAdmin({ limit: 1 });
+
+    expect(ordersRepository.findPage).toHaveBeenCalledWith(expect.anything(), 2, undefined);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].id).toBe('order-1');
+    expect(result.nextCursor).not.toBeNull();
+  });
+
+  it('cursor를 넘기면 디코딩해서 Repository에 before로 전달한다', async () => {
+    const { service, ordersRepository } = createHarness([]);
+    ordersRepository.findPage.mockResolvedValue([]);
+    const cursorOrderId = '99999999-9999-4999-8999-999999999999';
+    const cursor = encodeAdminOrderCursor({ id: cursorOrderId });
+
+    await service.listForAdmin({ cursor });
+
+    expect(ordersRepository.findPage).toHaveBeenCalledWith(expect.anything(), 21, {
+      id: cursorOrderId,
+    });
+  });
+
+  it('주문이 하나도 없으면 빈 목록과 null cursor를 반환하고 order_items 조회를 하지 않는다', async () => {
+    const { service, ordersRepository, orderItemsRepository } = createHarness([]);
+    ordersRepository.findPage.mockResolvedValue([]);
+
+    const result = await service.listForAdmin({});
+
+    expect(result).toEqual({ items: [], nextCursor: null });
+    expect(orderItemsRepository.findByOrderIds).toHaveBeenCalledWith(
+      expect.anything(),
+      [],
+    );
+  });
+
+  it('각 주문의 items를 order_id로 정확히 그룹핑해서 매핑한다', async () => {
+    const { service, ordersRepository, orderItemsRepository } = createHarness([]);
+    ordersRepository.findPage.mockResolvedValue([
+      orderRow({ id: 'order-1' }),
+      orderRow({ id: 'order-2' }),
+    ]);
+    orderItemsRepository.findByOrderIds.mockResolvedValue([
+      {
+        id: 'item-1',
+        order_id: 'order-1',
+        menu_id: MENU_A.id,
+        menu_name: MENU_A.name,
+        unit_price: MENU_A.price,
+        quantity: 1,
+      },
+      {
+        id: 'item-2',
+        order_id: 'order-2',
+        menu_id: MENU_A.id,
+        menu_name: MENU_A.name,
+        unit_price: MENU_A.price,
+        quantity: 3,
+      },
+    ]);
+
+    const result = await service.listForAdmin({});
+
+    expect(result.items.find((o) => o.id === 'order-1')?.items).toEqual([
+      { menuId: MENU_A.id, menuName: MENU_A.name, unitPrice: MENU_A.price, quantity: 1 },
+    ]);
+    expect(result.items.find((o) => o.id === 'order-2')?.items).toEqual([
+      { menuId: MENU_A.id, menuName: MENU_A.name, unitPrice: MENU_A.price, quantity: 3 },
+    ]);
   });
 });

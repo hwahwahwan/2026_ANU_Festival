@@ -226,4 +226,70 @@ describe('Orders 관련 Repository (실제 PostgreSQL integration)', () => {
     expect(found).toHaveLength(1);
     expect(found[0].id).toBe(items[0].id);
   });
+
+  describe('findPage (관리자 목록 keyset pagination)', () => {
+    /**
+     * cursor가 id만 인코딩하고 created_at은 Repository가 DB에서 다시 읽어
+     * 비교하므로(admin-order-cursor.util.ts 참고), 같은 밀리초 안에서
+     * 마이크로초만 다른 두 주문도 서로 건너뛰지 않고 정확히 다음 주문을
+     * 찾아야 한다. 과거에 cursor가 JS Date(밀리초 정밀도)를 왕복시켰을 때는
+     * 이 케이스에서 더 과거 행이 조용히 누락되는 버그가 있었다.
+     */
+    it('[11] 같은 밀리초, 다른 마이크로초인 두 주문도 건너뛰지 않고 정확히 다음 페이지로 찾는다', async () => {
+      const { order: newer } = await createOrderWithItems(
+        '550e8400-e29b-41d4-a716-446655440013',
+      );
+      const { order: older } = await createOrderWithItems(
+        '550e8400-e29b-41d4-a716-446655440014',
+      );
+
+      await databaseService.query(
+        `UPDATE orders SET created_at = '2026-01-01T10:00:00.123456+00' WHERE id = $1`,
+        [newer.id],
+      );
+      await databaseService.query(
+        `UPDATE orders SET created_at = '2026-01-01T10:00:00.123001+00' WHERE id = $1`,
+        [older.id],
+      );
+
+      const nextPage = await ordersRepository.findPage(databaseService, 1, {
+        id: newer.id,
+      });
+
+      expect(nextPage).toHaveLength(1);
+      expect(nextPage[0].id).toBe(older.id);
+    });
+
+    it('[12] created_at이 완전히 같은 두 주문은 id DESC로 tie-break되어 건너뛰지 않는다', async () => {
+      const { order: a } = await createOrderWithItems(
+        '550e8400-e29b-41d4-a716-446655440015',
+      );
+      const { order: b } = await createOrderWithItems(
+        '550e8400-e29b-41d4-a716-446655440016',
+      );
+
+      await databaseService.query(
+        `UPDATE orders SET created_at = '2026-01-01T09:00:00.500000+00' WHERE id = ANY($1::uuid[])`,
+        [[a.id, b.id]],
+      );
+
+      // created_at이 같으므로 ORDER BY id DESC에서는 문자열상 더 큰 id가 먼저 온다.
+      const [largerId, smallerId] = [a.id, b.id].sort().reverse();
+
+      const nextPage = await ordersRepository.findPage(databaseService, 1, {
+        id: largerId,
+      });
+
+      expect(nextPage).toHaveLength(1);
+      expect(nextPage[0].id).toBe(smallerId);
+    });
+
+    it('[13] before로 넘긴 id가 존재하지 않으면 빈 배열을 반환한다', async () => {
+      const found = await ordersRepository.findPage(databaseService, 10, {
+        id: '00000000-0000-4000-8000-000000000000',
+      });
+
+      expect(found).toEqual([]);
+    });
+  });
 });
