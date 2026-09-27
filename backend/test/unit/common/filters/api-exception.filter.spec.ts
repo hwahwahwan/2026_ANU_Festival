@@ -7,6 +7,7 @@ import {
   ConflictException,
   HttpException,
 } from '@nestjs/common';
+import { ThrottlerException } from '@nestjs/throttler';
 import { ApiExceptionFilter } from '../../../../src/common/filters/api-exception.filter';
 import { ApiException } from '../../../../src/common/filters/api.exception';
 import { ERROR_CODE } from '../../../../src/common/contracts/api-error';
@@ -92,6 +93,18 @@ describe('ApiExceptionFilter', () => {
     expect(json).toHaveBeenCalledWith({
       code: ERROR_CODE.CONFLICT,
       message: 'Conflict',
+    });
+  });
+
+  it('429 ThrottlerException(rate limit)을 TOO_MANY_REQUESTS로 매핑한다', () => {
+    const { host, status, json } = createMockHost();
+
+    filter.catch(new ThrottlerException(), host);
+
+    expect(status).toHaveBeenCalledWith(429);
+    expect(json).toHaveBeenCalledWith({
+      code: ERROR_CODE.TOO_MANY_REQUESTS,
+      message: expect.any(String),
     });
   });
 

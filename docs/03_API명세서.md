@@ -50,7 +50,7 @@ type OrderStatus =
 
 Frontend와 Backend는 이 값을 그대로 사용한다. 화면 문구(예: "입금 확인 대기")로의 변환은 Frontend 책임이다.
 
-환불 관련 상태(`REFUNDED` 등)는 정책 확정 전까지 추가하지 않는다.
+환불 관련 상태(`REFUNDED` 등)는 추가하지 않는다(확정, 환불해도 `OrderStatus`는 변경되지 않는다).
 
 ## 1-6. Content-Type / Validation
 
@@ -97,6 +97,7 @@ Frontend는 `message` 문자열이 아니라 `code`를 기준으로 분기한다
 | CONFLICT | 409 | 그 외 충돌(범용 fallback) |
 | ADMIN_LOGIN_FAILED | 401 | 관리자 로그인 시도 자체의 ID/PW 불일치 (신규 확정) |
 | DAILY_ORDER_LIMIT_EXCEEDED | 409 | 당일 주문번호 9999건 초과 (신규 확정) |
+| TOO_MANY_REQUESTS | 429 | rate limit 초과(범용 fallback, 신규 확정). 현재 `POST /admin/auth/login`에만 적용 |
 | INTERNAL_ERROR | 500 | 서버 내부 오류 |
 
 > `GUEST_REQUIRED`는 v0.9 Guest 제거 이후 폐기된 코드다. 사용하지 않는다.
@@ -117,11 +118,13 @@ Frontend는 `message` 문자열이 아니라 `code`를 기준으로 분기한다
 | --- | --- |
 | Cookie 이름 | `admin_access_token` |
 | 저장 방식 | JWT, HttpOnly Cookie |
-| 유효기간 | 30분 |
+| 유효기간 | 12시간 |
 | Refresh Token | 사용하지 않음 |
-| JWT Payload | `{ sub: admins.id }` |
+| JWT Payload | `{ sub: admins.id, jti: 로그인 세션(기기) 식별자 }` |
 
 만료 시 REST 요청과 기존 Socket 접근 모두 차단한다.
+
+`jti`는 로그인마다 새로 발급되는 값이며, 로그아웃 시 그 로그인 세션(기기)의 Socket만 종료하는 데 사용한다(같은 관리자가 다른 기기에서 로그인한 세션에는 영향을 주지 않는다). 서버가 별도의 세션 저장소를 두는 것은 아니며, JWT 안의 이 값만 비교한다(확정, 2026-09-20).
 
 ## 1-10. Pagination (확정)
 
@@ -290,6 +293,10 @@ Response Body (`PaymentSettingsView`):
 
 `accountNumber`는 문자열이다(앞자리 0 보존 목적).
 
+**계좌 미설정 시 (확정, 2026-09-19):** 관리자가 아직 한 번도 계좌를 등록하지 않았거나(`PATCH /admin/settings/payment` 미실행) 배포 시 초기 seed(`npm run seed:payment-settings`)를 실행하지 않은 경우, `payment_settings`에 행이 없다. 이 경우 빈 값이나 임의 값으로 200을 반환하지 않고 `404 NOT_FOUND`로 응답한다. Frontend는 이 코드를 "계좌 준비 중" 상태로 별도 처리해야 한다(예: "입금 계좌 준비 중입니다. 부스에 문의해주세요.").
+
+발생 가능한 Error Code: `NOT_FOUND`
+
 ---
 
 ## 2-2. 관리자 주문 API (Backend 1)
@@ -457,7 +464,9 @@ Request Body:
 
 Response Body: 없음 (§1-7 원칙과 동일하게 body가 필요 없는 요청으로 처리한다. 로그인한 관리자 정보가 화면에 필요하면 별도 조회로 가져온다.)
 
-발생 가능한 Error Code: `VALIDATION_ERROR`, `ADMIN_LOGIN_FAILED`(§1-8 참고)
+**Rate Limit (확정):** 같은 IP에서 60초에 10회로 제한한다. 초과 시 `429 TOO_MANY_REQUESTS`로 응답한다(상세 정책은 `003_백엔드2_운영실시간.md` §7 참고).
+
+발생 가능한 Error Code: `VALIDATION_ERROR`, `ADMIN_LOGIN_FAILED`(§1-8 참고), `TOO_MANY_REQUESTS`
 
 ---
 
@@ -468,11 +477,13 @@ Response Body: 없음 (§1-7 원칙과 동일하게 body가 필요 없는 요청
 | 기능 | 로그아웃 |
 | 담당 | Backend 2 |
 | Method / URL | `POST` `/admin/auth/logout` |
-| 인증 | 관리자 |
+| 인증 | 없음 (AdminGuard를 적용하지 않는다, 아래 참고) |
 | Request Body | 없음 |
 | 성공 코드 | `204 No Content` |
 
 관리자 Cookie를 발급 시와 동일한 옵션으로 삭제한다.
+
+**AdminGuard 미적용 (확정):** 로그아웃은 Cookie/JWT의 존재·유효성과 무관하게 항상 `admin_access_token` Cookie를 삭제하고 `204`를 반환하는 멱등적 동작이다. Cookie가 없거나 JWT가 만료·변조된 상태로 호출해도 `ADMIN_UNAUTHORIZED`를 반환하지 않는다(브라우저가 어떤 인증 상태에 있든 로그아웃 시도가 항상 성공해야 하기 때문).
 
 ---
 
@@ -525,6 +536,10 @@ Request Body (둘 중 하나 이상):
 
 Response Body: `PaymentSettingsView` (`GET /settings/payment`와 동일 구조)
 
+계좌 미설정 시 `GET /settings/payment`와 동일하게 `404 NOT_FOUND`(§2-1 참고). 관리자 화면도 최초 설정 전에는 조회가 아니라 빈 폼에서 `PATCH`로 최초 등록하는 흐름을 전제로 한다.
+
+발생 가능한 Error Code: `NOT_FOUND`, `ADMIN_UNAUTHORIZED`
+
 ---
 
 ### PATCH /admin/settings/payment
@@ -537,11 +552,13 @@ Response Body: `PaymentSettingsView` (`GET /settings/payment`와 동일 구조)
 | 인증 | 관리자 (매출 비밀번호 불필요) |
 | 성공 코드 | `200 OK` (갱신된 `PaymentSettingsView` 반환) |
 
-Request Body:
+Request Body(`bankName`/`accountNumber`/`accountHolder` **3개 필드 모두 필수** — 부분 수정이 아니라 전체 교체다):
 
 ```json
 { "bankName": "신한은행", "accountNumber": "110123456789", "accountHolder": "홍길동" }
 ```
+
+값 검증(확정, 2026-09-19): 각 필드는 앞뒤 공백을 제거(trim)한 뒤 저장한다. trim 후 빈 문자열이 되는 값(예: `"   "`)은 `VALIDATION_ERROR`로 거절한다. 설정이 아직 없는 상태에서 호출하면 최초 등록으로 처리되어 `200`을 반환한다(이 경우는 최초 등록이지 "변경"이 아니므로 관리자 변경 이력에는 남기지 않는다 — 04_DB스키마.md §9-1 참고). 이미 값이 있는 상태에서 실제로 값이 하나라도 달라지면 변경 이력이 남는다.
 
 발생 가능한 Error Code: `VALIDATION_ERROR`, `ADMIN_UNAUTHORIZED`
 
@@ -570,7 +587,7 @@ Response Body (`SalesView`):
   "timezone": "Asia/Seoul",
   "basis": "payment_confirmed_at",
   "asOf": "2026-09-18T05:00:00.000Z",
-  "festivalPeriod": { "from": "2026-09-18T00:00:00+09:00", "to": "2026-09-21T00:00:00+09:00" },
+  "festivalPeriod": { "from": "2026-09-19T15:00:00.000Z", "to": "2026-09-22T15:00:00.000Z" },
   "today": { "date": "2026-09-18", "quantity": 12, "amount": 42000, "refundedAmount": 0 },
   "festival": { "quantity": 12, "amount": 42000, "refundedAmount": 0 },
   "daily": [ { "date": "2026-09-18", "quantity": 12, "amount": 42000, "refundedAmount": 0 } ],
@@ -581,7 +598,7 @@ Response Body (`SalesView`):
 }
 ```
 
-`festivalPeriod`는 축제 3일 운영 기준 예시다(실제 시작일은 `FESTIVAL_START_AT` 환경변수로 배포 시 설정).
+`festivalPeriod`는 축제 3일 운영(9/20~9/22, `FESTIVAL_START_AT=2026-09-20`/`FESTIVAL_END_AT=2026-09-22`) 기준 예시다(실제 날짜는 배포 시 설정). `FESTIVAL_START_AT`/`FESTIVAL_END_AT` 환경변수 자체는 시각이 아니라 KST 날짜(`YYYY-MM-DD`, 둘 다 inclusive)이며, `festivalPeriod.to`는 종료일 다음날 KST 자정(배타적 상한)이다 — 자세한 형식·검증 규칙은 `001_백엔드_공통.md` §46, `003_백엔드2_운영실시간.md` §20 참고. `asOf`/`festivalPeriod.from`/`festivalPeriod.to`를 포함한 모든 시각 필드는 `Date.toISOString()`(UTC, `Z` 접미사)로 직렬화한다 — `01_프론트_백엔드_공통사항.md` §6이 요구하는 ISO 8601 형식을 만족하는 여러 표기 중 하나이며, `+09:00` 오프셋 표기와 가리키는 시각은 동일하다.
 
 **환불 반영 (확정):** `today`/`festival`/`daily`의 각 합계에 `refundedAmount`를 추가한다. 이는 해당 날짜에 **환불이 처리된**(`order_refunds.processed_at` 기준) 금액의 합이며, 원래 결제된 날짜가 아니라 환불을 처리한 날짜에 집계한다. `amount`(원 결제액)는 환불 여부와 무관하게 그대로 유지하고 수정하지 않는다. 순매출이 필요하면 프론트엔드가 `amount - refundedAmount`로 계산한다. `byMenu`는 메뉴별 환불 배분을 지원하지 않으므로(전액 환불만 지원) `refundedAmount`를 넣지 않는다.
 

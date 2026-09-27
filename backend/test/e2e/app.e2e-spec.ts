@@ -1,12 +1,14 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../../src/app.module';
-import { ApiExceptionFilter } from '../../src/common/filters/api-exception.filter';
+import { configureApp } from '../../src/common/configure-app';
 
 /**
- * 아직 도메인 컨트롤러가 없는 단계이므로, 현재 실제로 부팅되는 것
- * (AppModule 전체 + main.ts와 동일한 전역 Pipe/Filter)만 검증한다.
+ * AppModule 전체 + main.ts와 동일한 공통 초기화(configureApp: Cookie 파싱,
+ * ValidationPipe, ApiExceptionFilter)만 검증한다. CORS/graceful shutdown/
+ * trust proxy처럼 실제 네트워크·배포 환경에서만 의미가 있는 설정은
+ * main.ts에만 있고 테스트에는 필요 없다(configure-app.ts 참고).
  * DatabaseService는 Pool을 생성만 하고 실제로 연결하지 않으므로
  * 실제 PostgreSQL 없이도 앱 부팅과 HTTP 응답 계약을 검증할 수 있다.
  */
@@ -19,17 +21,7 @@ describe('AppModule (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-
-    // main.ts의 bootstrap()과 동일한 전역 Pipe/Filter 구성을 재현한다.
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
-    app.useGlobalFilters(new ApiExceptionFilter());
-
+    configureApp(app);
     await app.init();
   });
 
