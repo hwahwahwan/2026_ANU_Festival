@@ -147,4 +147,82 @@ describe('Orders 관련 Repository (실제 PostgreSQL integration)', () => {
       ),
     ).rejects.toThrow();
   });
+
+  it('[7] 이름 + 주문번호가 모두 일치하는 주문을 조회한다', async () => {
+    const { order } = await createOrderWithItems(
+      '550e8400-e29b-41d4-a716-446655440007',
+      '홍길동',
+    );
+
+    const found = await ordersRepository.findByCustomerNameAndOrderNumber(
+      databaseService,
+      '홍길동',
+      order.order_number,
+    );
+
+    expect(found?.id).toBe(order.id);
+  });
+
+  it('[8] 이름만 맞고 주문번호가 틀리면 조회되지 않는다', async () => {
+    await createOrderWithItems('550e8400-e29b-41d4-a716-446655440008', '홍길동');
+
+    const found = await ordersRepository.findByCustomerNameAndOrderNumber(
+      databaseService,
+      '홍길동',
+      '0101-9999',
+    );
+
+    expect(found).toBeNull();
+  });
+
+  it('[8-1] 주문번호만 맞고 이름이 틀리면 조회되지 않는다', async () => {
+    const { order } = await createOrderWithItems(
+      '550e8400-e29b-41d4-a716-446655440012',
+      '홍길동',
+    );
+
+    const found = await ordersRepository.findByCustomerNameAndOrderNumber(
+      databaseService,
+      '다른사람',
+      order.order_number,
+    );
+
+    expect(found).toBeNull();
+  });
+
+  it('[9] 동명이인 두 주문은 주문번호로 구분되어 서로 섞이지 않는다', async () => {
+    const { order: first } = await createOrderWithItems(
+      '550e8400-e29b-41d4-a716-446655440009',
+      '홍길동',
+    );
+    const { order: second } = await createOrderWithItems(
+      '550e8400-e29b-41d4-a716-446655440010',
+      '홍길동',
+    );
+
+    const foundFirst = await ordersRepository.findByCustomerNameAndOrderNumber(
+      databaseService,
+      '홍길동',
+      first.order_number,
+    );
+    const foundSecond = await ordersRepository.findByCustomerNameAndOrderNumber(
+      databaseService,
+      '홍길동',
+      second.order_number,
+    );
+
+    expect(foundFirst?.id).toBe(first.id);
+    expect(foundSecond?.id).toBe(second.id);
+  });
+
+  it('[10] order_id로 해당 주문의 order_items만 조회된다', async () => {
+    const { order, items } = await createOrderWithItems(
+      '550e8400-e29b-41d4-a716-446655440011',
+    );
+
+    const found = await orderItemsRepository.findByOrderId(databaseService, order.id);
+
+    expect(found).toHaveLength(1);
+    expect(found[0].id).toBe(items[0].id);
+  });
 });

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PoolClient } from 'pg';
+import { Queryable } from '../database/database.types';
 
 export interface OrderItemRow {
   id: string;
@@ -39,5 +40,17 @@ export class OrderItemsRepository {
     }
 
     return rows;
+  }
+
+  async findByOrderId(db: Queryable, orderId: string): Promise<OrderItemRow[]> {
+    const result = await db.query<OrderItemRow>(
+      `SELECT id, order_id, menu_id, menu_name, unit_price, quantity
+       FROM order_items
+       WHERE order_id = $1
+       ORDER BY id`,
+      [orderId],
+    );
+
+    return result.rows;
   }
 }

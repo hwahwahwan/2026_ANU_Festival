@@ -10,6 +10,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { CreateOrderItemDto } from './create-order-item.dto';
+import { NormalizeText } from '../../common/transforms/normalize-text.transform';
+import { CUSTOMER_NAME_MAX_LENGTH } from '../constants/order-validation.constants';
 
 const PHONE_REGEX = /^01[016789]-?\d{3,4}-?\d{4}$/;
 
@@ -17,9 +19,10 @@ export class CreateOrderDto {
   @IsUUID()
   orderRequestId!: string;
 
+  @NormalizeText()
   @IsString()
   @IsNotEmpty()
-  @MaxLength(50)
+  @MaxLength(CUSTOMER_NAME_MAX_LENGTH)
   customerName!: string;
 
   @IsString()
