@@ -600,16 +600,77 @@ describe('OrdersService.confirmPayment', () => {
     expect(events.publish).not.toHaveBeenCalled();
   });
 
-  it('PAYMENT_PENDING이 아니면 ORDER_STATE_CONFLICT를 던지고 아무것도 바꾸지 않는다', async () => {
-    const { service, ordersRepository, events } = createHarness([]);
-    ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status: 'ACCEPTED' }));
+  it.each(['ACCEPTED', 'COOKING', 'READY', 'COMPLETED', 'CANCELLED'] as const)(
+    'PAYMENT_PENDING이 아니면(%s) ORDER_STATE_CONFLICT를 던지고 아무것도 바꾸지 않는다',
+    async (status) => {
+      const { service, ordersRepository, events } = createHarness([]);
+      ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status }));
 
-    await expect(service.confirmPayment('order-1', ADMIN)).rejects.toMatchObject(
-      new ApiException(ERROR_CODE.ORDER_STATE_CONFLICT, '입금 확인할 수 없는 주문 상태입니다.'),
+      await expect(service.confirmPayment('order-1', ADMIN)).rejects.toMatchObject(
+        new ApiException(ERROR_CODE.ORDER_STATE_CONFLICT, '입금 확인할 수 없는 주문 상태입니다.'),
+      );
+      expect(ordersRepository.updateStatus).not.toHaveBeenCalled();
+      expect(events.publish).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('OrdersService.cancel', () => {
+  it('PAYMENT_PENDING 주문을 CANCELLED로 전환하고 History를 남긴다', async () => {
+    const { service, ordersRepository, orderItemsRepository, orderHistoryRepository, events } =
+      createHarness([]);
+    const pending = orderRow({ status: 'PAYMENT_PENDING' });
+    const cancelled = orderRow({ status: 'CANCELLED' });
+    ordersRepository.findByIdForUpdate.mockResolvedValue(pending);
+    ordersRepository.updateStatus.mockResolvedValue(cancelled);
+    orderItemsRepository.findByOrderId.mockResolvedValue([]);
+
+    const result = await service.cancel('order-1', ADMIN);
+
+    expect(ordersRepository.updateStatus).toHaveBeenCalledWith(
+      FAKE_CLIENT,
+      'order-1',
+      'CANCELLED',
+    );
+    expect(orderHistoryRepository.create).toHaveBeenCalledWith(FAKE_CLIENT, {
+      orderId: 'order-1',
+      action: 'CANCELLED',
+      fromStatus: 'PAYMENT_PENDING',
+      toStatus: 'CANCELLED',
+      actorType: 'ADMIN',
+      actorId: 'admin-1',
+    });
+    expect(result.status).toBe('CANCELLED');
+    expect(events.publish).toHaveBeenCalledWith('order.updated', {
+      orderId: 'order-1',
+      status: 'CANCELLED',
+    });
+  });
+
+  it('주문이 없으면 ORDER_NOT_FOUND를 던진다', async () => {
+    const { service, ordersRepository, events } = createHarness([]);
+    ordersRepository.findByIdForUpdate.mockResolvedValue(null);
+
+    await expect(service.cancel('missing', ADMIN)).rejects.toMatchObject(
+      new ApiException(ERROR_CODE.ORDER_NOT_FOUND, '주문을 찾을 수 없습니다.'),
     );
     expect(ordersRepository.updateStatus).not.toHaveBeenCalled();
     expect(events.publish).not.toHaveBeenCalled();
   });
+
+  it.each(['ACCEPTED', 'COOKING', 'READY', 'COMPLETED', 'CANCELLED'] as const)(
+    'PAYMENT_PENDING이 아니면(%s) ORDER_STATE_CONFLICT를 던지고 아무것도 바꾸지 않는다',
+    async (status) => {
+      const { service, ordersRepository, events } = createHarness([]);
+      ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status }));
+
+      await expect(service.cancel('order-1', ADMIN)).rejects.toMatchObject(
+        new ApiException(ERROR_CODE.ORDER_STATE_CONFLICT, '취소할 수 없는 주문 상태입니다.'),
+      );
+      expect(ordersRepository.updateStatus).not.toHaveBeenCalled();
+      expect(events.publish).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('OrdersService.changeStatus', () => {
@@ -646,6 +707,7 @@ describe('OrdersService.changeStatus', () => {
     ['ACCEPTED', 'READY'],
     ['READY', 'COOKING'],
     ['COMPLETED', 'READY'],
+    ['CANCELLED', 'COOKING'],
   ] as const)('%s → %s 전이는 거절되고 ORDER_STATE_CONFLICT를 던진다', async (from, to) => {
     const { service, ordersRepository, events } = createHarness([]);
     ordersRepository.findByIdForUpdate.mockResolvedValue(orderRow({ status: from }));

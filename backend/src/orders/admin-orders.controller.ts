@@ -48,6 +48,15 @@ export class AdminOrdersController {
     return this.ordersService.changeStatus(orderId, dto.status, admin);
   }
 
+  @Post(':orderId/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(
+    @Param('orderId', ParseUUIDPipe) orderId: string,
+    @CurrentAdmin() admin: AuthenticatedAdmin,
+  ): Promise<AdminOrderView> {
+    return this.ordersService.cancel(orderId, admin);
+  }
+
   @Get(':orderId/history')
   getHistory(
     @Param('orderId', ParseUUIDPipe) orderId: string,

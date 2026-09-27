@@ -113,6 +113,12 @@ describe('주문 상태 변경 + OrderHistory (실제 PostgreSQL)', () => {
       .set('Cookie', adminCookie);
   }
 
+  function cancel(orderId: string) {
+    return request(app.getHttpServer())
+      .post(`/admin/orders/${orderId}/cancel`)
+      .set('Cookie', adminCookie);
+  }
+
   describe('POST /admin/orders/:orderId/payment-confirmation', () => {
     it('[1] 관리자 Cookie 없이 요청하면 401을 반환한다', async () => {
       const orderId = await createOrder();
@@ -243,6 +249,82 @@ describe('주문 상태 변경 + OrderHistory (실제 PostgreSQL)', () => {
       );
 
       expect(response.status).toBe(404);
+    });
+  });
+
+  describe('POST /admin/orders/:orderId/cancel', () => {
+    it('[14] 관리자 Cookie 없이 요청하면 401을 반환한다', async () => {
+      const orderId = await createOrder();
+
+      const response = await request(app.getHttpServer()).post(
+        `/admin/orders/${orderId}/cancel`,
+      );
+
+      expect(response.status).toBe(401);
+      expect(response.body.code).toBe('ADMIN_UNAUTHORIZED');
+    });
+
+    it('[15] PAYMENT_PENDING 주문을 CANCELLED로 전환한다', async () => {
+      const orderId = await createOrder();
+
+      const response = await cancel(orderId);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ id: orderId, status: 'CANCELLED' });
+    });
+
+    it('[16] 입금 확인된 주문은 취소할 수 없고 409를 반환한다(환불을 사용해야 함)', async () => {
+      const orderId = await createOrder();
+      await confirmPayment(orderId);
+
+      const response = await cancel(orderId);
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('ORDER_STATE_CONFLICT');
+    });
+
+    it('[17] 존재하지 않는 orderId면 404를 반환한다', async () => {
+      const response = await cancel('00000000-0000-4000-8000-000000000000');
+
+      expect(response.status).toBe(404);
+      expect(response.body.code).toBe('ORDER_NOT_FOUND');
+    });
+
+    it('[18] §19: 입금 확인과 취소가 동시에 들어오면 하나만 성공하고 둘 다 성공하지는 않는다', async () => {
+      const orderId = await createOrder();
+
+      const [confirmed, cancelled] = await Promise.all([
+        confirmPayment(orderId),
+        cancel(orderId),
+      ]);
+
+      const statuses = [confirmed.status, cancelled.status].sort();
+      expect(statuses).toEqual([200, 409]);
+
+      const orderResult = await databaseService.query<{ status: string }>(
+        'SELECT status FROM orders WHERE id = $1',
+        [orderId],
+      );
+      expect(['ACCEPTED', 'CANCELLED']).toContain(orderResult.rows[0].status);
+
+      const historyResult = await databaseService.query<{ action: string }>(
+        `SELECT action FROM order_history WHERE order_id = $1 AND action IN ('PAYMENT_CONFIRMED', 'CANCELLED')`,
+        [orderId],
+      );
+      expect(historyResult.rows).toHaveLength(1);
+    });
+
+    it('[19] 취소된 주문은 입금 확인/상태 변경 모두 409로 거절된다 (터미널 상태)', async () => {
+      const orderId = await createOrder();
+      await cancel(orderId);
+
+      const confirmResult = await confirmPayment(orderId);
+      const statusResult = await changeStatus(orderId, 'COOKING');
+      const cancelAgainResult = await cancel(orderId);
+
+      expect(confirmResult.status).toBe(409);
+      expect(statusResult.status).toBe(409);
+      expect(cancelAgainResult.status).toBe(409);
     });
   });
 
