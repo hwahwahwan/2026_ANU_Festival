@@ -128,3 +128,57 @@ describe('CustomerOrdersController /orders/lookup (HTTP 계약)', () => {
     );
   });
 });
+
+describe('CustomerOrdersController POST /orders (HTTP 계약)', () => {
+  let app: INestApplication;
+  const orderLookupService = { lookup: jest.fn() };
+  const ordersService = { create: jest.fn() };
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [CustomerOrdersController],
+      providers: [
+        { provide: OrdersService, useValue: ordersService },
+        { provide: OrderLookupService, useValue: orderLookupService },
+      ],
+    })
+      .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+
+    app = moduleRef.createNestApplication();
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    );
+    app.useGlobalFilters(new ApiExceptionFilter());
+    await app.init();
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('대문자로 보낸 menuId는 소문자로 정규화된 뒤 OrdersService로 전달된다', async () => {
+    ordersService.create.mockResolvedValue(ORDER_VIEW);
+    const lowerMenuId = 'aabbccdd-1111-4111-8111-111111111111';
+
+    await request(app.getHttpServer())
+      .post('/orders')
+      .send({
+        orderRequestId: '550e8400-e29b-41d4-a716-446655440000',
+        customerName: '홍길동',
+        customerPhone: '010-1234-5678',
+        items: [{ menuId: lowerMenuId.toUpperCase(), quantity: 1 }],
+      });
+
+    expect(ordersService.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [{ menuId: lowerMenuId, quantity: 1 }],
+      }),
+    );
+  });
+});

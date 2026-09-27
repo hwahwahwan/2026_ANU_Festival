@@ -12,6 +12,7 @@ const ORDER_ROW: OrderRow = {
   id: 'order-1',
   order_number: '0918-0001',
   order_request_id: '550e8400-e29b-41d4-a716-446655440000',
+  request_fingerprint: 'fp-1',
   customer_name: '홍길동',
   customer_phone: '010-1234-5678',
   status: 'PAYMENT_PENDING',

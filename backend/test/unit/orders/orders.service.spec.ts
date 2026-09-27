@@ -1,6 +1,6 @@
 import { OrdersService } from '../../../src/orders/orders.service';
 import { DatabaseService } from '../../../src/database/database.service';
-import { OrdersRepository } from '../../../src/orders/orders.repository';
+import { OrdersRepository, OrderRow } from '../../../src/orders/orders.repository';
 import { OrderItemsRepository } from '../../../src/orders/order-items.repository';
 import { OrderNumberService } from '../../../src/orders/order-number.service';
 import { MenuReader, MenuSnapshot } from '../../../src/common/contracts/menu-reader';
@@ -8,6 +8,7 @@ import { OrderEventPublisher } from '../../../src/common/events/order-event.publ
 import { CreateOrderDto } from '../../../src/orders/dto/create-order.dto';
 import { ApiException } from '../../../src/common/filters/api.exception';
 import { ERROR_CODE } from '../../../src/common/contracts/api-error';
+import { computeRequestFingerprint } from '../../../src/orders/order-fingerprint.util';
 
 const MENU_A: MenuSnapshot = {
   id: '11111111-1111-1111-1111-111111111111',
@@ -44,10 +45,12 @@ function createHarness(menus: MenuSnapshot[]) {
 
   const ordersRepository = {
     create: jest.fn(),
+    findByOrderRequestId: jest.fn().mockResolvedValue(null),
   } as unknown as jest.Mocked<OrdersRepository>;
 
   const orderItemsRepository = {
     createMany: jest.fn(),
+    findByOrderId: jest.fn(),
   } as unknown as jest.Mocked<OrderItemsRepository>;
 
   const orderNumberService = {
@@ -91,6 +94,7 @@ describe('OrdersService.create', () => {
       id: 'order-1',
       order_number: '0918-0001',
       order_request_id: '550e8400-e29b-41d4-a716-446655440000',
+      request_fingerprint: 'fp-created',
       customer_name: '홍길동',
       customer_phone: '010-1234-5678',
       status: 'PAYMENT_PENDING',
@@ -137,6 +141,7 @@ describe('OrdersService.create', () => {
       id: 'order-1',
       order_number: '0918-0001',
       order_request_id: '550e8400-e29b-41d4-a716-446655440000',
+      request_fingerprint: 'fp-created',
       customer_name: '홍길동',
       customer_phone: '010-1234-5678',
       status: 'PAYMENT_PENDING',
@@ -165,6 +170,22 @@ describe('OrdersService.create', () => {
     expect(ordersRepository.create).not.toHaveBeenCalled();
   });
 
+  it('MenuReader가 반환한 menu.id가 요청 menuId와 대소문자 등으로 어긋나 Map에서 못 찾으면(개수는 같아 앞단 검사를 통과) 크래시 대신 MENU_UNAVAILABLE을 던진다', async () => {
+    const menuIdWithLetters = 'aabbccdd-1111-1111-1111-111111111111';
+    const { service, ordersRepository } = createHarness([
+      { ...MENU_A, id: menuIdWithLetters.toUpperCase() },
+    ]);
+
+    await expect(
+      service.create(
+        createDto({ items: [{ menuId: menuIdWithLetters, quantity: 1 }] }),
+      ),
+    ).rejects.toMatchObject(
+      new ApiException(ERROR_CODE.MENU_UNAVAILABLE, '존재하지 않는 메뉴가 포함되어 있습니다.'),
+    );
+    expect(ordersRepository.create).not.toHaveBeenCalled();
+  });
+
   it('품절된 메뉴가 포함되어 있으면 MENU_UNAVAILABLE을 던지고 주문을 생성하지 않는다', async () => {
     const { service, ordersRepository } = createHarness([MENU_SOLD_OUT]);
 
@@ -185,6 +206,7 @@ describe('OrdersService.create', () => {
       id: 'order-1',
       order_number: '0918-0001',
       order_request_id: '550e8400-e29b-41d4-a716-446655440000',
+      request_fingerprint: 'fp-created',
       customer_name: '홍길동',
       customer_phone: '010-1234-5678',
       status: 'PAYMENT_PENDING',
@@ -207,5 +229,192 @@ describe('OrdersService.create', () => {
     await service.create(createDto());
 
     expect(callOrder).toEqual(['withTransaction resolved', 'event published']);
+  });
+});
+
+function existingOrderRow(overrides: Partial<OrderRow> = {}): OrderRow {
+  return {
+    id: 'order-existing',
+    order_number: '0918-0001',
+    order_request_id: '550e8400-e29b-41d4-a716-446655440000',
+    request_fingerprint: computeRequestFingerprint({
+      customerName: '홍길동',
+      customerPhone: '010-1234-5678',
+      items: [{ menuId: MENU_A.id, quantity: 2 }],
+    }),
+    customer_name: '홍길동',
+    customer_phone: '010-1234-5678',
+    status: 'PAYMENT_PENDING',
+    total_price: 7000,
+    payment_confirmed_at: null,
+    created_at: new Date('2026-09-18T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+function uniqueViolation(constraint: string): Error {
+  return Object.assign(new Error('duplicate key value violates unique constraint'), {
+    code: '23505',
+    constraint,
+  });
+}
+
+describe('OrdersService.create (멱등성)', () => {
+  it('같은 orderRequestId + 같은 내용이면 기존 주문을 그대로 반환하고 새로 생성하지 않는다', async () => {
+    const { service, ordersRepository, orderItemsRepository, orderNumberService, events } =
+      createHarness([MENU_A]);
+    const existing = existingOrderRow();
+    ordersRepository.findByOrderRequestId.mockResolvedValue(existing);
+    orderItemsRepository.findByOrderId.mockResolvedValue([
+      {
+        id: 'item-1',
+        order_id: existing.id,
+        menu_id: MENU_A.id,
+        menu_name: MENU_A.name,
+        unit_price: MENU_A.price,
+        quantity: 2,
+      },
+    ]);
+
+    const result = await service.create(createDto());
+
+    expect(result.id).toBe(existing.id);
+    expect(ordersRepository.create).not.toHaveBeenCalled();
+    expect(orderNumberService.issue).not.toHaveBeenCalled();
+    expect(events.publish).not.toHaveBeenCalled();
+  });
+
+  it('같은 orderRequestId + 다른 내용이면 IDEMPOTENCY_CONFLICT를 던지고 주문을 생성하지 않는다', async () => {
+    const { service, ordersRepository } = createHarness([MENU_A]);
+    ordersRepository.findByOrderRequestId.mockResolvedValue(existingOrderRow());
+
+    await expect(
+      service.create(createDto({ items: [{ menuId: MENU_A.id, quantity: 999 }] })),
+    ).rejects.toMatchObject(
+      new ApiException(
+        ERROR_CODE.IDEMPOTENCY_CONFLICT,
+        '이미 다른 내용의 주문 요청이 처리되었습니다.',
+      ),
+    );
+    expect(ordersRepository.create).not.toHaveBeenCalled();
+  });
+
+  it('같은 orderRequestId + 같은 items인데 고객 이름이 다르면 다른 사람의 주문으로 보고 IDEMPOTENCY_CONFLICT를 던진다', async () => {
+    const { service, ordersRepository } = createHarness([MENU_A]);
+    ordersRepository.findByOrderRequestId.mockResolvedValue(existingOrderRow());
+
+    await expect(
+      service.create(createDto({ customerName: '다른사람' })),
+    ).rejects.toMatchObject(
+      new ApiException(
+        ERROR_CODE.IDEMPOTENCY_CONFLICT,
+        '이미 다른 내용의 주문 요청이 처리되었습니다.',
+      ),
+    );
+    expect(ordersRepository.create).not.toHaveBeenCalled();
+  });
+
+  it('같은 orderRequestId + 같은 items인데 전화번호가 다르면 IDEMPOTENCY_CONFLICT를 던진다', async () => {
+    const { service, ordersRepository } = createHarness([MENU_A]);
+    ordersRepository.findByOrderRequestId.mockResolvedValue(existingOrderRow());
+
+    await expect(
+      service.create(createDto({ customerPhone: '010-9999-9999' })),
+    ).rejects.toMatchObject(
+      new ApiException(
+        ERROR_CODE.IDEMPOTENCY_CONFLICT,
+        '이미 다른 내용의 주문 요청이 처리되었습니다.',
+      ),
+    );
+    expect(ordersRepository.create).not.toHaveBeenCalled();
+  });
+
+  it('같은 요청 안에 동일한 menuId가 중복되면 quantity를 합산해 order_item 한 줄로 저장한다', async () => {
+    const { service, ordersRepository, orderItemsRepository } = createHarness([MENU_A]);
+    ordersRepository.create.mockResolvedValue({
+      id: 'order-1',
+      order_number: '0918-0001',
+      order_request_id: '550e8400-e29b-41d4-a716-446655440000',
+      request_fingerprint: 'fp-created',
+      customer_name: '홍길동',
+      customer_phone: '010-1234-5678',
+      status: 'PAYMENT_PENDING',
+      total_price: 17500,
+      payment_confirmed_at: null,
+      created_at: new Date(),
+    });
+    orderItemsRepository.createMany.mockResolvedValue([]);
+
+    await service.create(
+      createDto({
+        items: [
+          { menuId: MENU_A.id, quantity: 2 },
+          { menuId: MENU_A.id, quantity: 3 },
+        ],
+      }),
+    );
+
+    expect(orderItemsRepository.createMany).toHaveBeenCalledWith(
+      FAKE_CLIENT,
+      'order-1',
+      [
+        {
+          menuId: MENU_A.id,
+          menuName: MENU_A.name,
+          unitPrice: MENU_A.price,
+          quantity: 5,
+        },
+      ],
+    );
+    expect(ordersRepository.create).toHaveBeenCalledWith(
+      FAKE_CLIENT,
+      expect.objectContaining({ totalPrice: MENU_A.price * 5 }),
+    );
+  });
+
+  it('동시에 같은 orderRequestId가 INSERT되어 UNIQUE 위반이 나면, 방금 커밋된 주문을 다시 조회해 반환한다', async () => {
+    const { service, ordersRepository, orderItemsRepository, events } = createHarness([
+      MENU_A,
+    ]);
+    const existing = existingOrderRow();
+    ordersRepository.create.mockRejectedValue(
+      uniqueViolation('orders_order_request_id_key'),
+    );
+    ordersRepository.findByOrderRequestId
+      .mockResolvedValueOnce(null) // 최초 조회 시점에는 아직 없었음
+      .mockResolvedValueOnce(existing); // INSERT 경합 후 재조회하면 존재함
+    orderItemsRepository.findByOrderId.mockResolvedValue([]);
+
+    const result = await service.create(createDto());
+
+    expect(result.id).toBe(existing.id);
+    expect(events.publish).not.toHaveBeenCalled();
+  });
+
+  it('경합 상황에서도 내용이 다르면 IDEMPOTENCY_CONFLICT를 던진다', async () => {
+    const { service, ordersRepository } = createHarness([MENU_A]);
+    ordersRepository.create.mockRejectedValue(
+      uniqueViolation('orders_order_request_id_key'),
+    );
+    ordersRepository.findByOrderRequestId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(existingOrderRow());
+
+    await expect(
+      service.create(createDto({ items: [{ menuId: MENU_A.id, quantity: 999 }] })),
+    ).rejects.toMatchObject(
+      new ApiException(
+        ERROR_CODE.IDEMPOTENCY_CONFLICT,
+        '이미 다른 내용의 주문 요청이 처리되었습니다.',
+      ),
+    );
+  });
+
+  it('orderRequestId와 무관한 다른 UNIQUE 위반은 그대로 전파한다', async () => {
+    const { service, ordersRepository } = createHarness([MENU_A]);
+    const error = uniqueViolation('orders_order_number_key');
+    ordersRepository.create.mockRejectedValue(error);
+
+    await expect(service.create(createDto())).rejects.toBe(error);
   });
 });
