@@ -80,6 +80,58 @@ export class OrdersRepository {
     return result.rows[0] ?? null;
   }
 
+  async findById(db: Queryable, id: string): Promise<OrderRow | null> {
+    const result = await db.query<OrderRow>(
+      `SELECT ${ORDER_ROW_COLUMNS}
+       FROM orders
+       WHERE id = $1`,
+      [id],
+    );
+
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * 상태 전이 검증 + UPDATE 사이에 다른 트랜잭션이 끼어들지 못하도록 행을
+   * 잠근다(§19 Row Lock). 그래서 client를 직접 받는다(Queryable이 아니라
+   * PoolClient) — 이 락은 같은 Transaction 안에서만 유효하다.
+   */
+  async findByIdForUpdate(client: PoolClient, id: string): Promise<OrderRow | null> {
+    const result = await client.query<OrderRow>(
+      `SELECT ${ORDER_ROW_COLUMNS}
+       FROM orders
+       WHERE id = $1
+       FOR UPDATE`,
+      [id],
+    );
+
+    return result.rows[0] ?? null;
+  }
+
+  /**
+   * findByIdForUpdate로 이미 행을 잠그고 상태를 검증한 뒤에만 호출한다.
+   * toStatus가 'ACCEPTED'면 payment_confirmed_at을 서버 시각으로 함께 기록한다.
+   */
+  async updateStatus(
+    client: PoolClient,
+    id: string,
+    toStatus: OrderStatus,
+  ): Promise<OrderRow> {
+    const result = await client.query<OrderRow>(
+      `UPDATE orders
+       SET status = $1,
+           payment_confirmed_at = CASE
+             WHEN $1 = 'ACCEPTED' THEN now()
+             ELSE payment_confirmed_at
+           END
+       WHERE id = $2
+       RETURNING ${ORDER_ROW_COLUMNS}`,
+      [toStatus, id],
+    );
+
+    return result.rows[0];
+  }
+
   /**
    * 최신 생성순(created_at DESC, id DESC) keyset pagination.
    * before가 주어지면 그 id가 가리키는 행보다 "뒤"(더 과거)에 오는 행만
