@@ -76,11 +76,11 @@
 
 ## 팀원 및 역할
 
-| 역할 | 담당 |
-| --- | --- |
-| Frontend | 고객 및 관리자 페이지 |
-| Backend 1 | 주문 · 결제 |
-| Backend 2 | 관리자 인증 · 메뉴 · 계좌 · 매출 · 실시간 통신 · 배포 |
+| 팀원 | 역할 | 담당 |
+| --- | --- | --- |
+| [@LAPIIZ](https://github.com/LAPIIZ) | Frontend | 고객 및 관리자 페이지 |
+| [@byunsanghun](https://github.com/byunsanghun) | Backend 1 | 주문 · 결제 |
+| [@hwahwahwan](https://github.com/hwahwahwan) | Backend 2 | 관리자 인증 · 메뉴 · 계좌 · 매출 · 실시간 통신 · 배포 |
 
 ## 실행 방법
 
