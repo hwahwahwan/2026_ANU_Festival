@@ -53,4 +53,23 @@ export class OrderItemsRepository {
 
     return result.rows;
   }
+
+  async findByOrderIds(
+    db: Queryable,
+    orderIds: readonly string[],
+  ): Promise<OrderItemRow[]> {
+    if (orderIds.length === 0) {
+      return [];
+    }
+
+    const result = await db.query<OrderItemRow>(
+      `SELECT id, order_id, menu_id, menu_name, unit_price, quantity
+       FROM order_items
+       WHERE order_id = ANY($1::uuid[])
+       ORDER BY order_id, id`,
+      [orderIds],
+    );
+
+    return result.rows;
+  }
 }

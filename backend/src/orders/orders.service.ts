@@ -8,16 +8,22 @@ import {
   ORDER_EVENT_PUBLISHER,
   OrderEventPublisher,
 } from '../common/events/order-event.publisher';
-import { OrderView } from '../common/contracts/order-view';
+import { AdminOrderListView, OrderView } from '../common/contracts/order-view';
 import { OrdersRepository, OrderRow } from './orders.repository';
-import { OrderItemsRepository } from './order-items.repository';
+import { OrderItemsRepository, OrderItemRow } from './order-items.repository';
 import { OrderNumberService } from './order-number.service';
 import { CreateOrderDto } from './dto/create-order.dto';
-import { toOrderView } from './order-view.mapper';
+import { ListAdminOrdersQueryDto } from './dto/list-admin-orders-query.dto';
+import { toAdminOrderView, toOrderView } from './order-view.mapper';
 import { computeRequestFingerprint } from './order-fingerprint.util';
 import { mergeOrderItems, OrderItemInput } from './merge-order-items.util';
+import {
+  decodeAdminOrderCursor,
+  encodeAdminOrderCursor,
+} from './admin-order-cursor.util';
 
 const ORDER_REQUEST_ID_UNIQUE_VIOLATION = '23505';
+const DEFAULT_ADMIN_ORDERS_LIMIT = 20;
 
 function isOrderRequestIdConflict(error: unknown): boolean {
   return (
@@ -82,6 +88,45 @@ export class OrdersService {
 
       return this.resolveExistingOrder(raceExisting, fingerprint);
     }
+  }
+
+  async listForAdmin(query: ListAdminOrdersQueryDto): Promise<AdminOrderListView> {
+    const limit = query.limit ?? DEFAULT_ADMIN_ORDERS_LIMIT;
+    const before = query.cursor ? decodeAdminOrderCursor(query.cursor) : undefined;
+
+    const rows = await this.ordersRepository.findPage(this.database, limit + 1, before);
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+
+    const itemsByOrderId = await this.groupItemsByOrderId(pageRows.map((row) => row.id));
+
+    const items = pageRows.map((row) =>
+      toAdminOrderView(row, itemsByOrderId.get(row.id) ?? []),
+    );
+
+    const last = pageRows[pageRows.length - 1];
+    const nextCursor = hasMore && last ? encodeAdminOrderCursor({ id: last.id }) : null;
+
+    return { items, nextCursor };
+  }
+
+  private async groupItemsByOrderId(
+    orderIds: readonly string[],
+  ): Promise<Map<string, OrderItemRow[]>> {
+    const items = await this.orderItemsRepository.findByOrderIds(this.database, orderIds);
+    const itemsByOrderId = new Map<string, OrderItemRow[]>();
+
+    for (const item of items) {
+      const bucket = itemsByOrderId.get(item.order_id);
+
+      if (bucket) {
+        bucket.push(item);
+      } else {
+        itemsByOrderId.set(item.order_id, [item]);
+      }
+    }
+
+    return itemsByOrderId;
   }
 
   private async resolveExistingOrder(

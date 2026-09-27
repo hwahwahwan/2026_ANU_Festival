@@ -1,4 +1,4 @@
-import { OrderView } from '../common/contracts/order-view';
+import { AdminOrderView, OrderView } from '../common/contracts/order-view';
 import { OrderRow } from './orders.repository';
 import { OrderItemRow } from './order-items.repository';
 
@@ -19,5 +19,12 @@ export function toOrderView(order: OrderRow, items: OrderItemRow[]): OrderView {
     paymentConfirmedAt: order.payment_confirmed_at
       ? order.payment_confirmed_at.toISOString()
       : null,
+  };
+}
+
+export function toAdminOrderView(order: OrderRow, items: OrderItemRow[]): AdminOrderView {
+  return {
+    ...toOrderView(order, items),
+    customerPhone: order.customer_phone,
   };
 }
