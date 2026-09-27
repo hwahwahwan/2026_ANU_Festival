@@ -216,6 +216,42 @@ export class OrdersService {
     return view;
   }
 
+  async cancel(orderId: string, admin: AuthenticatedAdmin): Promise<AdminOrderView> {
+    const view = await this.database.withTransaction(async (client) => {
+      const order = await this.ordersRepository.findByIdForUpdate(client, orderId);
+
+      if (!order) {
+        throw new ApiException(ERROR_CODE.ORDER_NOT_FOUND, '주문을 찾을 수 없습니다.');
+      }
+
+      if (order.status !== 'PAYMENT_PENDING') {
+        throw new ApiException(
+          ERROR_CODE.ORDER_STATE_CONFLICT,
+          '취소할 수 없는 주문 상태입니다.',
+        );
+      }
+
+      const updated = await this.ordersRepository.updateStatus(client, orderId, 'CANCELLED');
+
+      await this.orderHistoryRepository.create(client, {
+        orderId,
+        action: ORDER_HISTORY_ACTION.CANCELLED,
+        fromStatus: order.status,
+        toStatus: updated.status,
+        actorType: 'ADMIN',
+        actorId: admin.adminId,
+      });
+
+      const items = await this.orderItemsRepository.findByOrderId(client, orderId);
+
+      return toAdminOrderView(updated, items);
+    });
+
+    this.events.publish('order.updated', { orderId, status: view.status });
+
+    return view;
+  }
+
   async getHistory(orderId: string): Promise<OrderHistoryView[]> {
     const order = await this.ordersRepository.findById(this.database, orderId);
 
